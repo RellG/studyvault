@@ -76,6 +76,8 @@ scripts/restore.sh [snapshot]     # into an empty data/ with the app stopped; ve
 
 studyvault is for your own notes and self-testing. It doesn't scrape or store WGU assessment content, and the AI features only work from your own notes. The PA workspace records your drafts and evaluator feedback but never writes them. Check WGU's current AI-use policy for each course.
 
-## Third-party assets
+## License and third-party assets
+
+studyvault is released under the [MIT License](LICENSE).
 
 Vendored in `app/static/vendor/`: [htmx](https://htmx.org) 2.0.4, [EasyMDE](https://github.com/Ionaru/easy-markdown-editor) 2.18.0, [highlight.js](https://highlightjs.org) 11.9.0, [Font Awesome](https://fontawesome.com/v4/) 4.7.0. Each is under its own license.
