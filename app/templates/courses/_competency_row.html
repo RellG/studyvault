@@ -1,0 +1,19 @@
+<li class="comp-row" id="comp-{{ r.id }}">
+  <div class="comp-text">
+    <a href="/courses/{{ course.code }}/notes/competencies#{{ anchor(r.text) }}" title="Open this section of your notes">{{ r.text }}</a>
+  </div>
+  <form class="row comp-controls" method="post" action="/courses/{{ course.code }}/competencies/{{ r.id }}/confidence"
+        hx-post="/courses/{{ course.code }}/competencies/{{ r.id }}/confidence" hx-target="#comp-{{ r.id }}" hx-swap="outerHTML">
+    <span class="conf" role="group" aria-label="Confidence 1 to 5">
+      {% for v in range(1, 6) %}
+      <button type="submit" name="value" value="{{ v }}" class="{{ 'on' if r.confidence and v <= r.confidence }}"
+              aria-pressed="{{ 'true' if r.confidence == v else 'false' }}" title="Confidence {{ v }}/5">{{ v }}</button>
+      {% endfor %}
+    </span>
+    <button type="submit" name="value" value="reviewed" class="small" title="Mark reviewed today without changing the rating">Reviewed</button>
+    <span class="small muted">{% if r.last_reviewed %}reviewed {{ r.last_reviewed|date("%b %-d") }}{% else %}never reviewed{% endif %}</span>
+  </form>
+</li>
+{% if ready is defined and request.headers.get('HX-Request') %}
+<div id="readiness-box" hx-swap-oob="true">{% from "_macros.html" import readiness_detail %}{{ readiness_detail(ready) }}</div>
+{% endif %}

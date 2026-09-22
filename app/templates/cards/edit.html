@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Edit card · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+<form class="card" method="post" action="/cards/{{ card.id }}/edit">
+  <h2>Edit card</h2>
+  <label for="front">Front</label>
+  <textarea id="front" name="front" rows="4" required>{{ card.front }}</textarea>
+  <label for="back">Back</label>
+  <textarea id="back" name="back" rows="4" required>{{ card.back }}</textarea>
+  {% if comps %}<label for="card-comp">Competency</label>
+  <select id="card-comp" name="competency_id"><option value="">None</option>
+    {% for r in comps %}<option value="{{ r.id }}" {{ 'selected' if card.competency_id == r.id }}>{{ r.text|truncate(70, True, '…') }}</option>{% endfor %}</select>{% endif %}
+  <p class="small muted">Next due {{ card.due_on|date }} · interval {{ card.interval }} d · ease {{ card.ease }} · {{ card.reps }} successful review{{ '' if card.reps == 1 else 's' }} in a row</p>
+  <div class="actions">
+    <button class="primary" type="submit">Save</button>
+    <a class="button" href="/courses/{{ course.code }}/cards#card-{{ card.id }}">Cancel</a>
+  </div>
+</form>
+<form method="post" action="/cards/{{ card.id }}/delete" style="margin-top: 1rem" id="del-form">
+  <button type="button" class="danger" id="del-1">Delete card…</button>
+  <span id="del-2" hidden><button type="submit" class="danger">Yes, delete it</button> <button type="button" class="link" id="del-no">Keep it</button></span>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById("del-1").onclick = function () { this.hidden = true; document.getElementById("del-2").hidden = false; };
+  document.getElementById("del-no").onclick = function () { document.getElementById("del-2").hidden = true; document.getElementById("del-1").hidden = false; };
+</script>
+{% endblock %}

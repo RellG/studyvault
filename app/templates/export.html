@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} export · studyvault{% endblock %}
+{% block head %}{% include "courses/_hljs_head.html" %}{% endblock %}
+{% block content %}
+<div class="row spread no-print" style="margin-bottom: 1rem">
+  <a href="/courses/{{ course.code }}">← {{ course.code }}</a>
+  <div class="row">
+    <a class="button small" href="/courses/{{ course.code }}/export.md">Download .md</a>
+    <button class="primary small" type="button" onclick="window.print()">Print / save as PDF</button>
+  </div>
+</div>
+<article class="rendered">{{ html|safe }}</article>
+{% endblock %}
+{% block scripts %}{% include "courses/_hljs_run.html" %}{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Certifications · studyvault{% endblock %}
+{% block content %}
+<h1>Certifications <span class="muted small">{{ earned }} earned</span></h1>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('ok') %}<div class="banner green" role="status">Saved.</div>{% endif %}
+<div class="cols two">
+  {% for cert in certs %}{% set back = '/certs?ok=1' %}{% set show_course = true %}{% set course_code = '' %}{% include "assessment/_cert_form.html" %}{% endfor %}
+</div>
+<form class="card" method="post" action="/certs" style="margin-top: 1rem">
+  <h2>Add a certification</h2>
+  <div class="form-grid">
+    <div><label for="new-name">Name</label><input id="new-name" type="text" name="name" required placeholder="e.g. AWS Certified Solutions Architect – Associate"></div>
+    <div><label for="new-course">Course</label><select id="new-course" name="course_code"><option value="">Self-directed</option>
+      {% for c in courses %}<option value="{{ c.code }}">{{ c.code }} · {{ c.title }}</option>{% endfor %}</select></div>
+    <div><label>Exam date</label><input type="date" name="exam_date"></div>
+    <div><label>Voucher</label><select name="voucher_status">{% for v in voucher_statuses %}<option value="{{ v }}">{{ v|capitalize }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Add</button></div>
+</form>
+{% endblock %}

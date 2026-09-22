@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} flashcards · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('added') %}<div class="banner green" role="status">Card added.</div>{% endif %}
+{% if imported %}
+<div class="banner {{ 'green' if imported.added else 'amber' }}" role="status">
+  Imported {{ imported.added }} card{{ '' if imported.added == 1 else 's' }}{% if imported.dup %}; {{ imported.dup }} already existed{% endif %}.
+  {% if imported.skipped %}
+  <details><summary>{{ imported.skipped|length }} line{{ '' if imported.skipped|length == 1 else 's' }} didn't match a card format</summary>
+    <ul class="small">{% for s in imported.skipped[:30] %}<li><code>{{ s }}</code></li>{% endfor %}</ul></details>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="row spread">
+  <h2 style="margin: 0">Flashcards <span class="muted small">{{ cards|length }} total · {{ due }} due</span></h2>
+  {% if due %}<a class="button primary" href="/review?course={{ course.code }}">Review {{ due }} due</a>{% endif %}
+</div>
+
+<section class="cols two" style="margin-top: 1rem">
+  <form class="card" method="post" action="/courses/{{ course.code }}/cards">
+    <h3>New card</h3>
+    <label for="front">Front</label>
+    <textarea id="front" name="front" rows="3" required>{{ draft.front if draft else '' }}</textarea>
+    <label for="back">Back</label>
+    <textarea id="back" name="back" rows="3" required>{{ draft.back if draft else '' }}</textarea>
+    {% if comps %}<label for="card-comp">Competency</label>
+    <select id="card-comp" name="competency_id"><option value="">None</option>
+      {% for r in comps %}<option value="{{ r.id }}">{{ r.text|truncate(70, True, '…') }}</option>{% endfor %}</select>{% endif %}
+    <div class="actions"><button class="primary" type="submit">Add card</button></div>
+  </form>
+
+  <form class="card" method="post" action="/courses/{{ course.code }}/cards/import">
+    <h3>Bulk import</h3>
+    <p class="small muted">Formats: <code>Q: … / A: …</code> (one line, or Q and A on separate lines; a blank line ends a card) ·
+      <code>term :: definition</code> · <code>{{ '{{c1::cloze}}' }}</code> (one card per c1, c2, …). Cards whose front already exists are skipped.</p>
+    <label class="inline"><input type="radio" name="source" value="paste" checked> Paste text</label>
+    <textarea name="text" rows="6" placeholder="Q: Which port does SSH use?&#10;A: TCP 22&#10;&#10;HTTPS :: TCP 443&#10;{{ '{{c1::802.11ax}}' }} is marketed as {{ '{{c2::Wi-Fi 6}}' }}">{{ pasted or '' }}</textarea>
+    {% if sections %}
+    <p style="margin-top: .8rem"><label class="inline"><input type="radio" name="source" value="notes"> From a notes section</label></p>
+    <select name="section" aria-label="Notes section">
+      {% for file, heading in sections %}<option value="{{ file }}|{{ heading }}">{{ file }} · {{ heading or '(top of file)' }}</option>{% endfor %}
+    </select>
+    <p class="small muted">A section under a competency heading tags its cards to that competency.</p>
+    {% endif %}
+    {% if comps %}<label for="imp-comp">Tag all to competency</label>
+    <select id="imp-comp" name="competency_id"><option value="">None / from section</option>
+      {% for r in comps %}<option value="{{ r.id }}">{{ r.text|truncate(70, True, '…') }}</option>{% endfor %}</select>{% endif %}
+    <div class="actions"><button class="primary" type="submit">Import</button></div>
+  </form>
+</section>
+
+<section class="card" style="margin-top: 1rem">
+  <h3>All cards</h3>
+  {% if cards %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Front</th><th>Back</th><th>Due</th><th></th></tr></thead>
+    <tbody>
+    {% for k in cards %}
+    <tr id="card-{{ k.id }}">
+      <td>{{ k.front|truncate(120, True, '…') }}{% if k.comp_text %}<div class="small muted">{{ k.comp_text|truncate(60, True, '…') }}</div>{% endif %}
+        {% if k.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}</td>
+      <td>{{ k.back|truncate(120, True, '…') }}</td>
+      <td class="nowrap small">{% if k.due_on <= today.isoformat() %}<span class="badge amber">due</span>{% else %}{{ k.due_on|date("%b %-d") }}{% endif %}</td>
+      <td class="nowrap"><a class="small" href="/cards/{{ k.id }}/edit">Edit</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">No cards yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

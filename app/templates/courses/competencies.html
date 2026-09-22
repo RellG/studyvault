@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import readiness_detail %}
+{% block title %}{{ course.code }} competencies · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if imported %}
+<div class="banner green" role="status">
+  Imported: {{ imported.added }} new{% if imported.kept %}, {{ imported.kept }} kept with their ratings{% endif %}{% if imported.removed %}, {{ imported.removed }} removed{% endif %}.
+  {% if imported.sections %}Added {{ imported.sections }} section{{ '' if imported.sections == 1 else 's' }} to your competencies notes.{% endif %}
+</div>
+{% endif %}
+
+<section class="cols main-side">
+  <div>
+    <div class="row spread">
+      <h2 style="margin-top: 0">Competencies</h2>
+      <a class="button small" href="/courses/{{ course.code }}/notes/competencies">Open notes</a>
+    </div>
+    {% if comps %}
+    <p class="small muted">Rate each 1–5 as you study; rating also marks it reviewed today. The text links to its section in your notes.</p>
+    <ol class="comp-list">
+      {% for r in comps %}{% include "courses/_competency_row.html" %}{% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">None yet. Copy the competency list from the WGU course page and paste it below, one per line.</p>
+    {% endif %}
+  </div>
+  <aside class="stack">
+    <div class="card">
+      <h2>Readiness</h2>
+      <div id="readiness-box">{{ readiness_detail(ready) }}</div>
+    </div>
+  </aside>
+</section>
+
+<section class="card" style="margin-top: 1rem">
+  <h2>{{ 'Re-import' if comps else 'Import' }} competencies</h2>
+  {% if confirm_replace %}
+  <div class="banner amber" role="alert">
+    This replaces the {{ confirm_replace.existing }} competencies you have with {{ confirm_replace.new }}.
+    {{ confirm_replace.keep }} match exactly and keep their ratings;
+    {% if confirm_replace.lose %}<strong>{{ confirm_replace.lose }} will be removed along with their ratings.</strong>{% else %}none are removed.{% endif %}
+    Your notes aren't touched; new sections are only added.
+  </div>
+  {% endif %}
+  <form method="post" action="/courses/{{ course.code }}/competencies/import">
+    <label for="comp-text">One competency per line (bullets and numbering are stripped)</label>
+    <textarea id="comp-text" name="text" rows="8" placeholder="The learner explains …">{{ pasted or '' }}</textarea>
+    <div class="actions">
+      {% if confirm_replace %}
+      <input type="hidden" name="confirm" value="yes">
+      <button class="primary" type="submit">Yes, replace</button>
+      <a class="button" href="/courses/{{ course.code }}/competencies">Cancel</a>
+      {% else %}
+      <button class="primary" type="submit">Import</button>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}

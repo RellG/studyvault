@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Review · studyvault{% endblock %}
+{% block head %}{% include "courses/_hljs_head.html" %}{% endblock %}
+{% block content %}
+<div class="review">
+  <div class="row spread">
+    <h1>Review{% if scope %} · <a href="/courses/{{ scope.code }}/cards">{{ scope.code }}</a>{% endif %}</h1>
+    <span class="muted">{{ remaining }} left · {{ done }} done today</span>
+  </div>
+  {% if card %}
+  <form method="post" action="/review/{{ card.id }}" id="review-form">
+    <input type="hidden" name="course" value="{{ scope.code if scope else '' }}">
+    <div class="card flashcard">
+      {% if not scope %}<div class="small muted" style="margin-bottom: .5rem">{{ card.code }}</div>{% endif %}
+      <div class="rendered front" style="border: 0; padding: 0; background: none">{{ front|safe }}</div>
+      <div class="rendered back" id="back" hidden style="border: 0; padding: 1rem 0 0; background: none">{{ back|safe }}</div>
+    </div>
+    <button type="button" class="flip primary" id="flip">Show answer <span class="small muted" style="color: inherit; opacity: .8">(space)</span></button>
+    <div class="grades" id="grades" hidden>
+      {% for g in [1, 2, 3, 4] %}
+      <button type="submit" name="grade" value="{{ g }}" {{ 'class=primary' if g == 3 }}>
+        {{ labels[g] }} <small>{{ g }} · {{ preview[g] }} d</small>
+      </button>
+      {% endfor %}
+    </div>
+  </form>
+  <p class="small muted" style="text-align: center">Keys: space shows the answer, 1–4 grade it.</p>
+  {% else %}
+  <div class="card" style="text-align: center">
+    <h2>All caught up 🎉</h2>
+    <p class="muted">{% if done %}{{ done }} card{{ '' if done == 1 else 's' }} reviewed today. {% endif %}Nothing else is due{% if scope %} for {{ scope.code }}{% endif %}.</p>
+    <p><a class="button" href="{{ '/courses/' ~ scope.code ~ '/cards' if scope else '/' }}">Back</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+{% if card %}
+<script>
+(function () {
+  var back = document.getElementById("back"), grades = document.getElementById("grades"), flip = document.getElementById("flip");
+  var form = document.getElementById("review-form"), sent = false;
+  document.querySelectorAll(".flashcard pre code").forEach(function (el) { if (window.hljs) hljs.highlightElement(el); });
+  function show() { back.hidden = false; grades.hidden = false; flip.hidden = true; }
+  flip.addEventListener("click", show);
+  form.addEventListener("submit", function (e) { if (sent) e.preventDefault(); sent = true; });
+  document.addEventListener("keydown", function (e) {
+    if (e.target.matches("input, textarea, select")) return;
+    if (e.key === " " || e.key === "Enter") { if (back.hidden) { e.preventDefault(); show(); } return; }
+    if (!back.hidden && /^[1-4]$/.test(e.key) && !sent) {
+      e.preventDefault();
+      form.querySelector('button[value="' + e.key + '"]').click();
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

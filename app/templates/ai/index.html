@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} AI assist · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }} <span class="small">Nothing was saved; the rest of the app is unaffected.</span></div>{% endif %}
+{% if course.assessment_type == 'PA' %}<div class="banner info" role="note"><strong>{{ integrity }}</strong> These tools only work from your notes; there's no drafting help for the PA itself.</div>{% endif %}
+
+<form class="card" method="get" action="/courses/{{ course.code }}/ai">
+  <label for="section">Start from a notes section</label>
+  <div class="row" style="flex-wrap: nowrap">
+    <select id="section" name="section">
+      <option value="">— choose —</option>
+      {% for file, heading in sections %}<option value="{{ file }}|{{ heading }}" {{ 'selected' if section == file ~ '|' ~ heading }}>{{ file }} · {{ heading or '(top of file)' }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="small">Load</button>
+  </div>
+</form>
+
+<form class="card" method="post" action="/courses/{{ course.code }}/ai/run" style="margin-top: 1rem" id="ai-form">
+  <input type="hidden" name="section" value="{{ section }}">
+  <label for="ai-text">Notes to send <span class="muted small">(only this text leaves the Pi; trim it to the part you want)</span></label>
+  <textarea id="ai-text" name="text" rows="12" maxlength="{{ max_chars }}">{{ text }}</textarea>
+  {% if comps %}
+  <label for="ai-comp">Competency <span class="muted small">(for gap check; also tags accepted cards/questions)</span></label>
+  <select id="ai-comp" name="competency_id"><option value="">None</option>
+    {% for r in comps %}<option value="{{ r.id }}">{{ r.text|truncate(80, True, '…') }}</option>{% endfor %}</select>
+  {% endif %}
+  <div class="actions">
+    {% for key, label in actions.items() %}<button type="submit" name="action" value="{{ key }}" {{ 'class=primary' if loop.first }}>{{ label }}</button>{% endfor %}
+  </div>
+  <p class="small muted" id="ai-wait" hidden>Asking the model… this can take up to 30 seconds.</p>
+  <p class="small muted">Model: {{ provider }}. Results come back as drafts: you keep, edit or discard each one.</p>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById("ai-form").addEventListener("submit", function () {
+    document.getElementById("ai-wait").hidden = false;
+    this.querySelectorAll("button").forEach(function (b) { setTimeout(function () { b.disabled = true; }, 0); });
+  });
+</script>
+{% endblock %}

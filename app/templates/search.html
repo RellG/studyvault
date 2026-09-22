@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Search · studyvault{% endblock %}
+{% block content %}
+<h1>Search</h1>
+<form class="card" method="get" action="/search">
+  <label for="q">Search notes, flashcards, questions and mistakes</label>
+  <input id="q" name="q" type="search" value="{{ q }}" autofocus placeholder="e.g. OSPF area, 802.11ax, S3 lifecycle">
+  <div class="form-grid">
+    <div><label for="term">Term</label>
+      <select id="term" name="term"><option value="">All terms</option>
+        {% for t in terms %}<option value="{{ t.n }}" {{ 'selected' if term == t.n }}>Term {{ t.n }}</option>{% endfor %}</select></div>
+    <div><label for="course">Course</label>
+      <select id="course" name="course"><option value="">All courses</option>
+        {% for c in courses %}<option value="{{ c.code }}" {{ 'selected' if course == c.code }}>{{ c.code }} · {{ c.title }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="actions"><button class="primary" type="submit">Search</button></div>
+</form>
+{% if q %}
+<section class="card" style="margin-top: 1rem">
+  <p class="muted small">{{ hits|length }} result{{ '' if hits|length == 1 else 's' }}{% if hits|length == 50 %} (showing the best 50){% endif %}</p>
+  {% for h in hits %}
+  <div class="hit">
+    <a href="{{ h.url }}"><strong>{{ h.label }}</strong></a>
+    {% if h.term_n %}<span class="badge">Term {{ h.term_n }}</span>{% endif %}
+    {% if h.kind != 'note' and h.title %}<div>{{ h.title|safe }}</div>{% endif %}
+    <div class="small muted">{{ h.snippet|safe }}</div>
+  </div>
+  {% else %}
+  <p>Nothing found for “{{ q }}”.</p>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

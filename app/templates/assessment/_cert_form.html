@@ -1,0 +1,19 @@
+<form class="card" method="post" action="/certs/{{ cert.id }}" id="cert-{{ cert.id }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <div class="row spread">
+    <h3 style="margin: 0">{{ cert.name }}</h3>
+    {% if cert.result == 'passed' %}<span class="badge green">earned</span>{% elif cert.result == 'failed' %}<span class="badge red">not passed</span>{% endif %}
+  </div>
+  <input type="hidden" name="name" value="{{ cert.name }}">
+  {% if show_course %}<p class="small muted">{% if cert.code %}Course <a href="/courses/{{ cert.code }}">{{ cert.code }}</a>{% else %}Self-directed{% endif %}</p>{% endif %}
+  <input type="hidden" name="course_code" value="{{ cert.code or course_code or '' }}">
+  <div class="form-grid">
+    <div><label>Voucher</label><select name="voucher_status">{% for v in voucher_statuses %}<option value="{{ v }}" {{ 'selected' if cert.voucher_status == v }}>{{ v|capitalize }}</option>{% endfor %}</select></div>
+    <div><label>Voucher expires</label><input type="date" name="voucher_expires" value="{{ cert.voucher_expires or '' }}"></div>
+    <div><label>Exam date</label><input type="date" name="exam_date" value="{{ cert.exam_date or '' }}"></div>
+    <div><label>Result</label><select name="result">{% for v in cert_results %}<option value="{{ v }}" {{ 'selected' if cert.result == v }}>{{ v|capitalize }}</option>{% endfor %}</select></div>
+    <div><label>Cert ID</label><input type="text" name="cert_id" value="{{ cert.cert_id or '' }}"></div>
+    <div><label>Cert expires</label><input type="date" name="expires_on" value="{{ cert.expires_on or '' }}"></div>
+  </div>
+  <div class="actions"><button class="primary small" type="submit">Save</button></div>
+</form>

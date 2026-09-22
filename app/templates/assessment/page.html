@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% from "_macros.html" import readiness_detail %}
+{% block title %}{{ course.code }} assessment · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('ok') %}<div class="banner green" role="status">Saved.</div>{% endif %}
+
+<form class="row" method="post" action="/courses/{{ course.code }}/assessment/type" style="margin-bottom: 1rem">
+  <label for="atype" style="margin: 0">Assessment type</label>
+  <select id="atype" name="assessment_type" style="width: auto">
+    <option value="" {{ 'selected' if not course.assessment_type }}>Not set</option>
+    <option value="OA" {{ 'selected' if course.assessment_type == 'OA' }}>Objective assessment (OA)</option>
+    <option value="PA" {{ 'selected' if course.assessment_type == 'PA' }}>Performance assessment (PA)</option>
+    <option value="cert" {{ 'selected' if course.assessment_type == 'cert' }}>Certification exam</option>
+  </select>
+  <button class="small" type="submit">Set</button>
+</form>
+
+{% if not course.assessment_type %}
+<div class="card"><p>Set the assessment type from the WGU course page to get the matching workspace: pre-assessment log and exam scheduling for an OA or cert, or rubric, drafts and submissions for a PA.</p></div>
+{% endif %}
+
+{# ------------------------------------------------------------ OA / cert prep #}
+{% if course.assessment_type in ('OA', 'cert') %}
+<section class="cols main-side">
+  <div class="card" id="exam">
+    <h2>Readiness checklist</h2>
+    <ul class="checklist">
+      {% for item in checklist %}
+      <li class="{{ 'correct' if item.ok else '' }}">{{ '✓' if item.ok else '○' }} {{ item.label }}{% if item.detail %} <span class="small muted">({{ item.detail }})</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% set all_ok = checklist|selectattr('ok')|list|length == checklist|length %}
+    {% if all_ok and not course.exam_date %}<div class="banner green">Everything's green. Time to schedule the exam.</div>{% endif %}
+    <form method="post" action="/courses/{{ course.code }}/assessment/exam" class="form-grid">
+      <div><label for="exam_date">Exam date</label><input id="exam_date" type="date" name="exam_date" value="{{ course.exam_date or '' }}"></div>
+      <div><label for="quiz_target">Quiz target %</label><input id="quiz_target" type="number" min="1" max="100" name="quiz_target" value="{{ course.quiz_target }}"></div>
+      <div class="actions" style="grid-column: 1 / -1"><button class="primary" type="submit">{{ 'Update' if course.exam_date else 'Schedule exam' }}</button></div>
+    </form>
+    {% if course.exam_date %}<p class="small muted">Exam {{ course.exam_date|date }}; the dashboard counts down to it.</p>{% endif %}
+  </div>
+  <aside class="card"><h2>Readiness</h2>{{ readiness_detail(ready) }}</aside>
+</section>
+
+<section class="card" id="pre" style="margin-top: 1rem">
+  <h2>Pre-assessments</h2>
+  {% if pres %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Score</th><th>Result</th><th>Breakdown</th></tr></thead>
+    <tbody>{% for p in pres %}
+    <tr><td class="nowrap">{{ p.taken_on|date }}</td><td>{{ '%g'|format(p.score) ~ '%' if p.score is not none else '—' }}</td>
+      <td>{% if p.passed %}<span class="badge green">passed</span>{% else %}<span class="badge amber">not yet</span>{% endif %}</td>
+      <td class="small">{% for r in comps if r.id in p.levels %}<div>{{ r.text|truncate(50, True, '…') }}: <strong>{{ levels[p.levels[r.id]][0] }}</strong></div>{% endfor %}
+        {% if p.notes %}<div class="muted">{{ p.notes }}</div>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  <form method="post" action="/courses/{{ course.code }}/assessment/preassessment" style="margin-top: .8rem">
+    <h3>Log a pre-assessment</h3>
+    <div class="form-grid">
+      <div><label for="taken_on">Date</label><input id="taken_on" type="date" name="taken_on" value="{{ today.isoformat() }}" required></div>
+      <div><label for="score">Score %</label><input id="score" type="number" name="score" min="0" max="100" step="0.1"></div>
+    </div>
+    <p><label class="inline"><input type="checkbox" name="passed" value="1"> Passed</label></p>
+    {% if comps %}
+    <p class="small muted">Per-competency results from the coaching report:</p>
+    {% for r in comps %}
+    <div class="row" style="margin: .3rem 0">
+      <span style="flex: 1 1 16rem">{{ r.text }}</span>
+      <select name="level_{{ r.id }}" style="width: auto; flex: 0 1 14rem" aria-label="Result for {{ r.text }}">
+        <option value="">—</option>
+        {% for k, v in levels.items() %}<option value="{{ k }}">{{ v[0] }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endfor %}
+    <p><label class="inline"><input type="checkbox" name="apply_confidence" value="1" checked> Set my confidence ratings from these results (Exemplary 5 · Competent 4 · Approaching 2 · Unsatisfactory 1)</label></p>
+    {% endif %}
+    <label for="pre-notes">Notes</label>
+    <textarea id="pre-notes" name="notes" rows="2" placeholder="What tripped me up"></textarea>
+    <div class="actions"><button class="primary" type="submit">Log pre-assessment</button></div>
+  </form>
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------ PA #}
+{% if course.assessment_type == 'PA' %}
+<div class="banner info" role="note"><strong>{{ integrity }}</strong></div>
+{% if warning %}
+<div class="banner red" role="alert">Revision risk: with {{ n_revisions }} revision{{ '' if n_revisions == 1 else 's' }} so far, another ~7-day review cycle would land around {{ warning.projected|date }}, after the term ends {{ warning.term_end|date }}. Submit early.</div>
+{% endif %}
+<section class="cols two">
+  <div class="card" id="tasks">
+    <h2>Rubric tasks</h2>
+    {% if tasks %}
+    <ul class="plain">
+      {% for t in tasks %}
+      <li class="row" style="margin: .35rem 0; flex-wrap: nowrap; align-items: flex-start">
+        <form method="post" action="/courses/{{ course.code }}/assessment/tasks/{{ t.id }}">
+          <select name="status" onchange="this.form.submit()" aria-label="Status" style="width: auto; min-height: 36px; padding: .2rem .4rem">
+            {% for s in task_statuses %}<option value="{{ s }}" {{ 'selected' if t.status == s }}>{{ {'todo': 'To do', 'drafting': 'Drafting', 'done': 'Done'}[s] }}</option>{% endfor %}
+          </select><noscript><button class="small">Set</button></noscript>
+        </form>
+        <span class="{{ 'muted' if t.status == 'done' }}" style="padding-top: .3rem">{{ t.rubric_text }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/courses/{{ course.code }}/assessment/rubric">
+      <label for="rubric">{{ 'Replace rubric' if tasks else 'Paste the rubric rows' }}, one per line</label>
+      <textarea id="rubric" name="text" rows="4"></textarea>
+      <div class="actions"><button type="submit" class="small">{{ 'Replace' if tasks else 'Import' }}</button></div>
+    </form>
+  </div>
+  <div class="card" id="submissions">
+    <h2>Submissions <span class="small muted">{{ n_revisions }} revision{{ '' if n_revisions == 1 else 's' }}</span></h2>
+    {% for s in subs %}
+    <form class="q" method="post" action="/courses/{{ course.code }}/assessment/submissions/{{ s.id }}">
+      <div class="row spread"><strong>{{ s.version }} · {{ s.submitted_on|date }}</strong>
+        <select name="result" style="width: auto; min-height: 36px">{% for r in ['pending', 'passed', 'revision'] %}<option value="{{ r }}" {{ 'selected' if s.result == r }}>{{ {'pending': 'Pending', 'passed': 'Passed', 'revision': 'Needs revision'}[r] }}</option>{% endfor %}</select></div>
+      <label class="small">Evaluator feedback</label>
+      <textarea name="feedback" rows="2">{{ s.feedback }}</textarea>
+      <button class="small" type="submit">Update</button>
+    </form>
+    {% endfor %}
+    <form method="post" action="/courses/{{ course.code }}/assessment/submissions" style="margin-top: .8rem">
+      <h3>Log a submission</h3>
+      <div class="form-grid">
+        <div><label>Version</label><select name="version">{% for d in drafts|reverse %}<option>{{ d.version }}</option>{% else %}<option value="">(save a draft first)</option>{% endfor %}</select></div>
+        <div><label>Submitted on</label><input type="date" name="submitted_on" value="{{ today.isoformat() }}"></div>
+      </div>
+      <label>Result</label>
+      <select name="result"><option value="pending">Pending</option><option value="passed">Passed</option><option value="revision">Needs revision</option></select>
+      <label>Evaluator feedback</label><textarea name="feedback" rows="2"></textarea>
+      <div class="actions"><button class="primary small" type="submit">Log submission</button></div>
+    </form>
+  </div>
+</section>
+
+<section class="card" id="drafts" style="margin-top: 1rem">
+  <h2>Draft versions</h2>
+  {% if drafts %}
+  <ul>{% for d in drafts|reverse %}<li><a href="/courses/{{ course.code }}/notes/{{ d.name }}">{{ d.version }}</a> · {{ d.date|date }}</li>{% endfor %}</ul>
+  {% if drafts|length > 1 %}
+  <form class="row" method="get" action="/courses/{{ course.code }}/assessment/diff">
+    <span>Compare</span>
+    <select name="a" style="width: auto">{% for d in drafts %}<option value="{{ d.name }}" {{ 'selected' if loop.revindex == 2 }}>{{ d.version }}</option>{% endfor %}</select>
+    <span>with</span>
+    <select name="b" style="width: auto">{% for d in drafts %}<option value="{{ d.name }}" {{ 'selected' if loop.last }}>{{ d.version }}</option>{% endfor %}</select>
+    <button class="small" type="submit">Show changes</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  <form method="post" action="/courses/{{ course.code }}/assessment/drafts">
+    <label for="draft-text">Save a new version{% if drafts %} (starts from {{ drafts[-1].version }}){% endif %}</label>
+    <textarea id="draft-text" name="text" rows="12">{{ latest_text }}</textarea>
+    <p class="small muted">Saved as <code>pa/draft-vN-{{ today.isoformat() }}.md</code> next to your notes. Earlier versions are never overwritten.</p>
+    <div class="actions"><button class="primary" type="submit">Save as new version</button></div>
+  </form>
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------ certification records #}
+{% if certs is defined and certs %}
+<h2>Certification</h2>
+<div class="cols two">
+  {% for cert in certs %}{% set back = '/courses/' ~ course.code ~ '/assessment?ok=1' %}{% set show_course = false %}{% set course_code = course.code %}{% include "assessment/_cert_form.html" %}{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

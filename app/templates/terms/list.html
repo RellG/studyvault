@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros.html" import course_link %}
+{% block title %}Terms · studyvault{% endblock %}
+{% block content %}
+<h1>Terms</h1>
+<section class="grid">
+  {% for t in terms %}
+  <a class="card tile" href="/terms/{{ t.n }}">
+    <div class="row spread"><h2>Term {{ t.n }}</h2>{% if current and current.n == t.n %}<span class="badge accent">current</span>{% endif %}</div>
+    <p>{{ t.start|date }} – {{ t.end|date }}</p>
+    <div class="meter" aria-hidden="true"><span style="width: {{ [100, (t.passed_cu / t.target_cu * 100) if t.target_cu else 0]|min }}%"></span></div>
+    <p class="muted small">{{ t.passed_cu }} of {{ t.target_cu }} CU target passed · {{ t.planned_cu }} CU planned · {{ t.n_courses }} courses</p>
+  </a>
+  {% endfor %}
+</section>
+{% if unassigned %}
+<h2>Not in a term</h2>
+<ul>{% for c in unassigned %}<li>{{ course_link(c) }} · {{ c.cu }} CU</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

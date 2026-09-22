@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Log in · studyvault{% endblock %}
+{% block content %}
+<section class="login card">
+  <h1>studyvault</h1>
+  <p class="muted">WGU BSCNE-AWS study notebook</p>
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <button type="submit" class="primary">Log in</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} draft diff · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+<p><a href="/courses/{{ course.code }}/assessment#drafts">← Drafts</a></p>
+<h2>{{ a.removeprefix('pa/') }} → {{ b.removeprefix('pa/') }}</h2>
+<p class="small muted">Green: added · amber: changed · red: removed. Only changed areas are shown.</p>
+<div class="table-wrap card">{{ table|safe }}</div>
+{% endblock %}

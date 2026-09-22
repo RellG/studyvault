@@ -1,0 +1,24 @@
+{% macro status(s) -%}
+<span class="badge s-{{ s }}">{{ STATUS_LABELS.get(s, s) }}</span>
+{%- endmacro %}
+
+{% macro readiness_badge(r) -%}
+{% if r.score is none %}<span class="badge" title="No readiness data yet">—</span>
+{% else %}<span class="badge {{ 'green' if r.score >= 80 else ('amber' if r.score >= 60 else 'red') }}">{{ r.score }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro readiness_detail(r) -%}
+<div class="stat">{% if r.score is none %}—{% else %}{{ r.score }}<small> / 100</small>{% endif %}</div>
+<p class="small muted">readiness = 100 × weighted mean of available parts (C 0.4 · R 0.3 · Q 0.3; missing parts dropped, weights rescaled)</p>
+<table class="small">
+  {% for k in ["C", "R", "Q"] %}
+  <tr><td>{{ k }}</td><td>{{ r.labels[k] }}</td><td class="right nowrap">
+    {% if r.components[k] is none %}<span class="muted">no data</span>{% else %}{{ (r.components[k] * 100)|round|int }}%{% endif %}
+  </td></tr>
+  {% endfor %}
+</table>
+{%- endmacro %}
+
+{% macro course_link(c) -%}
+<a href="/courses/{{ c.code }}"><strong>{{ c.code }}</strong></a> {{ c.title }}
+{%- endmacro %}

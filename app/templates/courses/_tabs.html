@@ -1,0 +1,10 @@
+<nav class="tabs" aria-label="Course sections">
+  <a href="/courses/{{ course.code }}" class="{{ 'active' if tab == 'overview' }}">Overview</a>
+  <a href="/courses/{{ course.code }}/competencies" class="{{ 'active' if tab == 'competencies' }}">Competencies</a>
+  <a href="/courses/{{ course.code }}/notes/notebook" class="{{ 'active' if tab == 'notebook' }}">Notebook</a>
+  <a href="/courses/{{ course.code }}/cards" class="{{ 'active' if tab == 'cards' }}">Cards{% if cards_due %} <span class="badge amber">{{ cards_due }}</span>{% endif %}</a>
+  <a href="/courses/{{ course.code }}/quizzes" class="{{ 'active' if tab == 'quizzes' }}">Quizzes</a>
+  <a href="/courses/{{ course.code }}/notes/mistakes" class="{{ 'active' if tab == 'mistakes' }}">Mistakes</a>
+  <a href="/courses/{{ course.code }}/assessment" class="{{ 'active' if tab in ('assessment', 'pa') }}">{{ {'OA': 'OA prep', 'PA': 'PA workspace', 'cert': 'Cert prep'}.get(course.assessment_type, 'Assessment') }}</a>
+  {% if ai_enabled %}<a href="/courses/{{ course.code }}/ai" class="{{ 'active' if tab == 'ai' }}">AI assist</a>{% endif %}
+</nav>

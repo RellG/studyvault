@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} AI draft · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+<div class="banner amber" role="note">Draft from the model: check every item against your notes. Nothing is saved until you press Accept, and only the rows you keep.</div>
+<h2>{{ label }}</h2>
+
+<form method="post" action="/courses/{{ course.code }}/ai/accept">
+  <input type="hidden" name="competency_id" value="{{ competency_id }}">
+  {% if action == 'cards' %}
+  <input type="hidden" name="kind" value="cards">
+  {% for c in result %}
+  <div class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+    <div class="form-grid">
+      <div><label>Front</label><textarea name="front_{{ loop.index0 }}" rows="2">{{ c.front }}</textarea></div>
+      <div><label>Back</label><textarea name="back_{{ loop.index0 }}" rows="2">{{ c.back }}</textarea></div>
+    </div>
+  </div>
+  {% endfor %}
+  {% elif action == 'questions' %}
+  <input type="hidden" name="kind" value="questions">
+  {% for q in result %}
+  <div class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+    <input type="hidden" name="kind_{{ loop.index0 }}" value="{{ q.kind }}">
+    <label>Question ({{ 'select all that apply' if q.kind == 'multi' else 'one answer' }})</label>
+    <textarea name="prompt_{{ loop.index0 }}" rows="2">{{ q.prompt }}</textarea>
+    <label>Choices (<code>*</code> marks correct)</label>
+    <textarea name="choices_{{ loop.index0 }}" rows="4">{{ q.choices_text }}</textarea>
+    <label>Explanation</label>
+    <textarea name="explanation_{{ loop.index0 }}" rows="2">{{ q.explanation }}</textarea>
+  </div>
+  {% endfor %}
+  {% else %}
+  <input type="hidden" name="kind" value="text">
+  <input type="hidden" name="title" value="{{ 'Gap check: ' ~ competency[:60] if action == 'gap' else 'Explained differently' }}">
+  <article class="rendered">{{ rendered|safe }}</article>
+  <details style="margin-top: .6rem"><summary>Edit before saving</summary>
+    <textarea name="text" rows="12">{{ result }}</textarea></details>
+  {% endif %}
+  <div class="actions">
+    <button class="primary" type="submit">{{ 'Accept kept items' if action in ('cards', 'questions') else 'Save to Notebook' }}</button>
+    <a class="button" href="/courses/{{ course.code }}/ai">Discard</a>
+  </div>
+</form>
+{% endblock %}

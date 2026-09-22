@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Quiz · {{ course.code }} · studyvault{% endblock %}
+{% block head %}{% include "courses/_hljs_head.html" %}{% endblock %}
+{% block content %}
+<div class="row spread">
+  <h1>{{ course.code }} practice quiz</h1>
+  {% if remaining is not none %}<span class="timer badge amber" id="timer" aria-live="off">--:--</span>{% endif %}
+</div>
+<p class="muted">{{ questions|length }} question{{ '' if questions|length == 1 else 's' }}{% if attempt.time_limit_min %} · {{ attempt.time_limit_min }} min; submits itself when time runs out{% endif %}.</p>
+<form method="post" action="/quizzes/{{ attempt.id }}/submit" id="quiz-form" class="card">
+  {% for q in questions %}
+  <fieldset class="q" style="border: 0; margin: 0; padding: .8rem 0">
+    <legend class="small muted">Question {{ loop.index }}{% if q.kind == 'multi' %} · select all that apply{% endif %}</legend>
+    <div class="rendered" style="border: 0; padding: 0; background: none">{{ prompts[q.id]|safe }}</div>
+    {% if q.kind == 'short' %}
+    <textarea name="q{{ q.id }}" rows="3" aria-label="Your answer"></textarea>
+    {% else %}
+    <div class="choices">
+      {% for ch in choices[q.id] %}
+      <label><input type="{{ 'checkbox' if q.kind == 'multi' else 'radio' }}" name="q{{ q.id }}" value="{{ loop.index0 }}"> <span>{{ ch }}</span></label>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </fieldset>
+  {% endfor %}
+  <div class="actions"><button class="primary" type="submit" id="submit-btn">Submit answers</button></div>
+</form>
+{% endblock %}
+{% block scripts %}
+{% include "courses/_hljs_run.html" %}
+<script>
+(function () {
+  var form = document.getElementById("quiz-form"), sent = false;
+  form.addEventListener("submit", function (e) { if (sent) { e.preventDefault(); return; } sent = true; });
+  window.addEventListener("beforeunload", function (e) { if (!sent) { e.preventDefault(); e.returnValue = ""; } });
+  {% if remaining is not none %}
+  var end = Date.now() + {{ remaining }} * 1000, el = document.getElementById("timer");
+  function tick() {
+    var s = Math.max(0, Math.round((end - Date.now()) / 1000));
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    if (s <= 60) el.classList.replace("amber", "red");
+    if (s === 0) { if (!sent) { sent = true; form.submit(); } return; }
+    setTimeout(tick, 500);
+  }
+  tick();
+  {% endif %}
+})();
+</script>
+{% endblock %}

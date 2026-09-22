@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, readiness_badge %}
+{% block title %}Term {{ term.n }} · studyvault{% endblock %}
+{% block content %}
+<div class="row spread">
+  <h1>Term {{ term.n }}</h1>
+  <div class="row small">{% for t in terms %}<a href="/terms/{{ t.n }}" class="button small {{ 'primary' if t.n == term.n }}">T{{ t.n }}</a>{% endfor %}</div>
+</div>
+<p class="muted">{{ term.start|date }} – {{ term.end|date }} · {{ stats.passed }} of {{ term.target_cu }} CU target passed · {{ stats.planned }} CU planned</p>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+
+<section class="card">
+  <h2>Timeline</h2>
+  <div class="timeline">
+    {% for r in tl.rows %}
+    <div class="tl-row">
+      <a href="/courses/{{ r.code }}" class="small"><strong>{{ r.code }}</strong></a>
+      <div class="tl-track" title="{{ r.label }}">
+        {% if r.bar %}<div class="tl-bar s-{{ r.status }} {{ 'planned' if r.planned }}" style="left: {{ r.bar[0] }}%; width: {{ r.bar[1] }}%"></div>{% endif %}
+        {% if r.target is not none %}<div class="tl-target" style="left: {{ r.target }}%" title="target date"></div>{% endif %}
+        {% if tl.today is not none %}<div class="tl-today" style="left: {{ tl.today }}%" title="today"></div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="small muted">Solid bar: mentor window (start → due). Dashed: planned, from the previous course's end to its target. Amber tick: your target date{% if tl.today is not none %}. Red line: today{% endif %}.</p>
+</section>
+
+<section class="card" style="margin-top: 1rem">
+  <h2>Courses</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Course</th><th>CU</th><th>Status</th><th>Target</th><th>Mentor due</th><th>Readiness</th><th></th></tr></thead>
+    <tbody>
+    {% for c in courses %}
+    <tr>
+      <td><a href="/courses/{{ c.code }}"><strong>{{ c.code }}</strong></a> {{ c.title }}
+        {% if c.approved %}<span class="badge green" title="Mentor-approved">approved</span>{% endif %}
+        {% if c.cert_name %}<div class="small muted">cert: {{ c.cert_name }}</div>{% endif %}</td>
+      <td>{{ c.cu }}</td>
+      <td>{{ status(c.status) }}</td>
+      <td class="nowrap">{{ c.target|date }}</td>
+      <td class="nowrap">{{ c.due|date }}{% if c.target and c.due and c.target > c.due %} <span class="badge red" title="Target is after the mentor due date">late</span>{% endif %}</td>
+      <td>{{ readiness_badge(ready[c.code]) }}</td>
+      <td><a href="/courses/{{ c.code }}/edit" class="small">Edit</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="cols two" style="margin-top: 1rem">
+  <form class="card" method="post" action="/terms/{{ term.n }}/add">
+    <h2>Move a course into Term {{ term.n }}</h2>
+    <input type="hidden" name="mode" value="move">
+    <label for="move-code">Course</label>
+    <select id="move-code" name="code" required>
+      {% for o in others %}<option value="{{ o.code }}">{{ o.code }} · {{ o.title }} ({{ o.cu }} CU{% if o.term_n %}, now Term {{ o.term_n }}{% endif %})</option>{% endfor %}
+    </select>
+    <div class="actions"><button class="primary" type="submit">Move here</button></div>
+  </form>
+  <form class="card" method="post" action="/terms/{{ term.n }}/add">
+    <h2>Add a new course</h2>
+    <p class="small muted">For a course that isn't in your plan yet (e.g. a mentor substitution).</p>
+    <input type="hidden" name="mode" value="new">
+    <div class="form-grid">
+      <div><label for="new-code">Code</label><input id="new-code" name="code" type="text" placeholder="D000" required pattern="[A-Za-z][0-9]{3}"></div>
+      <div><label for="new-cu">CU</label><input id="new-cu" name="cu" type="number" min="1" max="12" required></div>
+    </div>
+    <label for="new-title">Title</label><input id="new-title" name="title" type="text" required>
+    <label for="new-target">Target date</label><input id="new-target" name="target" type="date">
+    <div class="actions"><button class="primary" type="submit">Add course</button></div>
+  </form>
+</section>
+{% endblock %}

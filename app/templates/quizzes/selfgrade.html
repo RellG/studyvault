@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Mark your answers · studyvault{% endblock %}
+{% block content %}
+<h1>Mark your short answers</h1>
+<p class="muted">Compare each answer with the model answer and be honest. Misses go into <a href="/courses/{{ course.code }}/notes/mistakes">mistakes.md</a>.</p>
+<form method="post" action="/quizzes/{{ attempt.id }}/selfgrade" class="card">
+  {% for q in questions if q.kind == 'short' and answers[q.id].correct is none %}
+  <div class="q">
+    <div class="rendered" style="border: 0; padding: 0; background: none">{{ prompts[q.id]|safe }}</div>
+    <div class="cols two" style="margin: .5rem 0">
+      <div><div class="small muted">Your answer</div><div class="card" style="white-space: pre-wrap">{{ loads(answers[q.id].given_json)[0] or '(blank)' }}</div></div>
+      <div><div class="small muted">Model answer</div><div class="card" style="white-space: pre-wrap">{{ loads(q.answer_json) }}</div></div>
+    </div>
+    <div class="row">
+      <label class="inline"><input type="radio" name="q{{ q.id }}" value="right" required> Got it</label>
+      <label class="inline"><input type="radio" name="q{{ q.id }}" value="wrong"> Missed it</label>
+    </div>
+  </div>
+  {% endfor %}
+  <div class="actions"><button class="primary" type="submit">Finish quiz</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if q else 'New' }} question · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="banner green" role="status">Saved. Next one:</div>{% endif %}
+<form class="card" method="post">
+  <h2>{{ 'Edit' if q else 'New' }} question</h2>
+  <label for="kind">Type</label>
+  <select id="kind" name="kind">
+    {% for k, label in kinds.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ label }}</option>{% endfor %}
+  </select>
+  <label for="prompt">Question (markdown)</label>
+  <textarea id="prompt" name="prompt" rows="4" required>{{ form.prompt }}</textarea>
+  <div id="choices-box">
+    <label for="choices">Choices, one per line. Start the correct one(s) with <code>*</code></label>
+    <textarea id="choices" name="choices" rows="5" placeholder="TCP 21&#10;* TCP 22&#10;UDP 22&#10;TCP 23">{{ form.choices }}</textarea>
+  </div>
+  <div id="short-box">
+    <label for="short_answer">Model answer (you compare your answer to this)</label>
+    <textarea id="short_answer" name="short_answer" rows="3">{{ form.short_answer }}</textarea>
+  </div>
+  <label for="explanation">Explanation (shown after answering, copied into mistakes.md)</label>
+  <textarea id="explanation" name="explanation" rows="3">{{ form.explanation }}</textarea>
+  {% if comps %}<label for="competency_id">Competency</label>
+  <select id="competency_id" name="competency_id"><option value="">None</option>
+    {% for r in comps %}<option value="{{ r.id }}" {{ 'selected' if form.competency_id|string == r.id|string }}>{{ r.text|truncate(70, True, '…') }}</option>{% endfor %}</select>{% endif %}
+  <div class="actions">
+    <button class="primary" type="submit">Save</button>
+    {% if not q %}<button type="submit" name="another" value="1">Save and add another</button>{% endif %}
+    <a class="button" href="/courses/{{ course.code }}/quizzes">Cancel</a>
+  </div>
+</form>
+{% if q %}
+<form method="post" style="margin-top: 1rem">
+  <input type="hidden" name="delete" value="yes">
+  <button type="button" class="danger" id="del-1">Delete question…</button>
+  <span id="del-2" hidden><button type="submit" class="danger">Yes, delete it</button></span>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var kind = document.getElementById("kind");
+  function sync() {
+    var short = kind.value === "short";
+    document.getElementById("choices-box").hidden = short;
+    document.getElementById("short-box").hidden = !short;
+  }
+  kind.addEventListener("change", sync); sync();
+  var d1 = document.getElementById("del-1");
+  if (d1) d1.onclick = function () { d1.hidden = true; document.getElementById("del-2").hidden = false; };
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% from "_macros.html" import status %}
+<div class="row spread">
+  <div>
+    <p class="muted small" style="margin: 0">{% if course.term_n %}<a href="/terms/{{ course.term_n }}">Term {{ course.term_n }}</a>{% else %}Not in a term{% endif %} · {{ course.cu }} CU</p>
+    <h1>{{ course.code }} · {{ course.title }}</h1>
+  </div>
+  <div class="row">
+    {{ status(course.status) }}
+    {% if not active_session %}<form method="post" action="/sessions/start" style="margin: 0"><input type="hidden" name="course_code" value="{{ course.code }}"><button class="small" type="submit" title="Start the study timer">⏱ Study</button></form>{% endif %}
+    <a class="button small no-print" href="/courses/{{ course.code }}/export" title="Single file for offline review">Export</a>
+    <a class="button small" href="/courses/{{ course.code }}/edit">Edit</a>
+  </div>
+</div>
+<p class="small muted">
+  Assessment: {% if course.assessment_type %}{{ {'OA': 'objective assessment', 'PA': 'performance assessment', 'cert': 'certification exam'}[course.assessment_type] }}{% else %}not set{% endif %}
+  · Target {{ course.target|date }} · Mentor due {{ course.due|date }}
+  {% if course.exam_date %}· Exam {{ course.exam_date|date }}{% endif %}
+  {% if course.cert_name %}· Cert: {{ course.cert_name }}{% endif %}
+  {% if course.passed_on %}· Passed {{ course.passed_on|date }}{% endif %}
+</p>
+{% if weakest %}
+<p class="small" style="margin: .2rem 0 0"><span class="muted">Weakest:</span>
+  {% for w in weakest %}<a href="/courses/{{ course.code }}/competencies#comp-{{ w.id }}" title="{{ w.text }}">{{ w.text|truncate(48, True, '…') }}</a> <span class="badge">{{ w.confidence or 'unrated' }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+</p>
+{% endif %}

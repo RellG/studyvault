@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Study time · studyvault{% endblock %}
+{% block content %}
+<h1>Study time</h1>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+
+<section class="cols two">
+  <div class="card">
+    <h2>Timer</h2>
+    {% if active_session %}
+      <p>Studying <strong>{{ active_session.code or 'general' }}</strong> for <span class="timer js-elapsed" data-elapsed="{{ active_session.elapsed }}">…</span></p>
+      {% if active_session.pomodoro %}<p class="small" id="pomo" data-elapsed="{{ active_session.elapsed }}"></p>{% endif %}
+      <form method="post" action="/sessions/stop"><button class="primary" type="submit">Stop</button></form>
+    {% else %}
+    <form method="post" action="/sessions/start">
+      <label for="s-course">Course</label>
+      <select id="s-course" name="course_code"><option value="">General</option>
+        {% for c in courses %}<option value="{{ c.code }}">{{ c.code }} · {{ c.title }}</option>{% endfor %}</select>
+      <p><label class="inline"><input type="checkbox" name="pomodoro" value="1"> Pomodoro 25 / 5</label></p>
+      <div class="actions"><button class="primary" type="submit">Start</button></div>
+    </form>
+    <p class="small muted">The start time is kept on the server, so closing the tab or reloading doesn't lose it.</p>
+    {% endif %}
+  </div>
+  <form class="card" method="post" action="/sessions/manual">
+    <h2>Add time by hand</h2>
+    <div class="form-grid">
+      <div><label>Course</label><select name="course_code"><option value="">General</option>
+        {% for c in courses %}<option value="{{ c.code }}">{{ c.code }}</option>{% endfor %}</select></div>
+      <div><label>Date</label><input type="date" name="day" value="{{ today.isoformat() }}" required></div>
+      <div><label>Minutes</label><input type="number" name="minutes" min="1" max="960" required></div>
+    </div>
+    <div class="actions"><button type="submit">Add</button></div>
+  </form>
+</section>
+
+<section class="cols two" style="margin-top: 1rem">
+  <div class="card">
+    <h2>Hours per week</h2>
+    {% for w in a.weeks %}
+    <div class="hbar"><span class="small muted">{{ w.start|date("%b %-d") }}</span>
+      <div class="track"><div class="fill" style="width: {{ (w.hours / a.max_week * 100) if a.max_week else 0 }}%"></div></div>
+      <span class="small right">{{ '%.1f'|format(w.hours) }} h</span></div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <h2>Hours per course</h2>
+    {% if a.courses %}
+    {% for c in a.courses %}
+    <div class="hbar"><a class="small" href="/courses/{{ c.code }}">{{ c.code }}</a>
+      <div class="track"><div class="fill" style="width: {{ (c.hours / a.max_course * 100) if a.max_course else 0 }}%"></div></div>
+      <span class="small right">{{ '%.1f'|format(c.hours) }} h</span></div>
+    {% endfor %}
+    <h3>Hours per CU</h3>
+    <table class="small">
+      <thead><tr><th>Course</th><th>CU</th><th>Hours</th><th>h / CU</th></tr></thead>
+      <tbody>{% for c in a.courses %}
+        <tr><td>{{ c.code }}</td><td>{{ c.cu }}</td><td>{{ '%.1f'|format(c.hours) }}</td>
+          <td>{{ '%.1f'|format(c.per_cu) }}{% if c.slow %} <span class="badge amber" title="More than 1.5× your average hours per CU">slow</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% if a.avg_per_cu %}<p class="small muted">Your average: {{ '%.1f'|format(a.avg_per_cu) }} h per CU. “slow” = more than 1.5× that.</p>{% endif %}
+    {% if a.per_term %}<p class="small">By term: {% for t in a.per_term %}T{{ t.n }} {{ '%.1f'|format(t.hours) }} h{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+    {% else %}<p class="muted">No study time logged yet.</p>{% endif %}
+  </div>
+</section>
+
+<section class="card" style="margin-top: 1rem">
+  <h2>Recent sessions</h2>
+  {% if recent %}
+  <table class="small">
+    <thead><tr><th>Started</th><th>Course</th><th>Minutes</th><th></th></tr></thead>
+    <tbody>{% for s in recent %}
+      <tr><td class="nowrap">{{ s.started_at[:16].replace('T', ' ') }}</td><td>{{ s.code or 'general' }}</td>
+        <td>{{ '%g'|format(s.minutes) }}{% if s.minutes > long_min %} <span class="badge amber" title="Forgot to stop the timer?">long</span>{% endif %}</td>
+        <td><form method="post" action="/sessions/{{ s.id }}/delete" style="margin: 0"><button class="link" type="submit">Delete</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="muted">None yet.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,28 @@
+services:
+  studyvault:
+    build: .
+    image: studyvault:latest
+    platform: linux/arm/v7
+    container_name: studyvault
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${STUDYVAULT_TZ:-America/New_York}
+      STUDYVAULT_DATA: /data
+    ports:
+      # Published on the LAN address only, never 0.0.0.0.
+      - "${STUDYVAULT_LAN_IP:?set STUDYVAULT_LAN_IP in .env}:${STUDYVAULT_PORT:-8420}:8000"
+    volumes:
+      - ./data:/data
+    mem_limit: 250m
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} quizzes · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('saved') %}<div class="banner green" role="status">Question saved.</div>{% endif %}
+
+<section class="cols two">
+  <form class="card" method="post" action="/courses/{{ course.code }}/quizzes/start">
+    <h2>Start a practice quiz</h2>
+    {% if questions %}
+    <div class="form-grid">
+      <div><label for="count">Questions</label>
+        <input id="count" name="count" type="number" min="1" max="{{ questions|length }}" value="{{ [10, questions|length]|min }}"></div>
+      <div><label for="qcomp">Competency</label>
+        <select id="qcomp" name="competency_id"><option value="">All</option>
+          {% for r in comps %}<option value="{{ r.id }}">{{ r.text|truncate(50, True, '…') }}</option>{% endfor %}</select></div>
+    </div>
+    <p class="row" style="margin-top: .8rem">
+      <label class="inline"><input type="checkbox" name="shuffle" value="1" checked> Shuffle</label>
+      <label class="inline"><input type="checkbox" name="timed" value="1" id="timed"> Timed</label>
+      <input type="number" name="minutes" min="1" max="300" value="15" aria-label="Minutes" style="width: 6rem"> min
+    </p>
+    <div class="actions"><button class="primary" type="submit">Start</button></div>
+    {% else %}
+    <p class="muted">Add questions to the bank first.</p>
+    {% endif %}
+  </form>
+  <div class="card">
+    <h2>Score history</h2>
+    {% if history %}
+    <table class="small">
+      <thead><tr><th>Date</th><th>Score</th><th></th></tr></thead>
+      <tbody>{% for h in history[:12] %}
+        <tr><td class="nowrap">{{ h.finished_at[:16].replace('T', ' ') }}</td>
+          <td><strong>{{ h.score }}/{{ h.total }}</strong> <span class="muted">({{ (100 * h.score / h.total)|round|int }}%)</span></td>
+          <td><a href="/quizzes/{{ h.id }}">Review</a></td></tr>
+      {% endfor %}</tbody>
+    </table>
+    <p class="small muted">The latest score feeds readiness (Q).</p>
+    {% else %}
+    <p class="muted">No quizzes taken yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card" style="margin-top: 1rem">
+  <div class="row spread">
+    <h2 style="margin: 0">Question bank <span class="muted small">{{ questions|length }}</span></h2>
+    <a class="button primary small" href="/courses/{{ course.code }}/quizzes/questions/new">Add question</a>
+  </div>
+  {% if questions %}
+  <div class="table-wrap"><table style="margin-top: .6rem">
+    <thead><tr><th>Question</th><th>Type</th><th></th></tr></thead>
+    <tbody>{% for q in questions %}
+      <tr><td>{{ q.prompt|truncate(110, True, '…') }}{% if q.comp_text %}<div class="small muted">{{ q.comp_text|truncate(60, True, '…') }}</div>{% endif %}
+        {% if q.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}</td>
+        <td class="small nowrap">{{ kinds[q.kind] }}</td>
+        <td><a class="small" href="/courses/{{ course.code }}/quizzes/questions/{{ q.id }}">Edit</a></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</section>
+{% endblock %}

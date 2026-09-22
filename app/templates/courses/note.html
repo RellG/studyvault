@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} {{ title }} · studyvault{% endblock %}
+{% block head %}
+{% include "courses/_hljs_head.html" %}
+{% if mode == "edit" %}
+<link rel="stylesheet" href="/static/vendor/fa/css/font-awesome.min.css">
+<link rel="stylesheet" href="/static/vendor/easymde.min.css">
+<script src="/static/vendor/easymde.min.js"></script>
+{% endif %}
+{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% block above_note %}{% endblock %}
+<div class="row spread no-print">
+  <h2 style="margin: 0">{{ title }}</h2>
+  <div class="row">
+    {% if mode == "edit" %}
+      <span id="save-state" class="save-state" aria-live="polite">Saved</span>
+      <button type="button" class="small" id="save-now">Save now</button>
+      <a class="button small primary" href="?">Done</a>
+    {% else %}
+      <a class="button small primary" href="?mode=edit">Edit</a>
+    {% endif %}
+  </div>
+</div>
+{% if mode == "edit" %}
+<div class="editor-wrap" style="margin-top: .6rem">
+  <textarea id="note-text">{{ text }}</textarea>
+</div>
+<p class="small muted">Autosaves 2 s after you stop typing (Ctrl/⌘+S saves now). Paste or drag an image to upload it. <code>[[D325]]</code> links to another course.</p>
+{% else %}
+<article class="rendered" style="margin-top: .6rem">{{ html|safe }}</article>
+{% endif %}
+{% block below_note %}{% endblock %}
+{% endblock %}
+{% block scripts %}
+{% if mode == "edit" %}
+<script>
+(function () {
+  var url = "/courses/{{ course.code }}/notes/{{ name }}";
+  var base = "{{ version }}";
+  var stateEl = document.getElementById("save-state");
+  var timer = null, saving = false, again = false, dirty = false, conflict = false;
+
+  function setState(msg, isError) { stateEl.textContent = msg; stateEl.classList.toggle("error", !!isError); }
+
+  var renderTimer = null;
+  var mde = new EasyMDE({
+    element: document.getElementById("note-text"),
+    autoDownloadFontAwesome: false,
+    spellChecker: false,
+    nativeSpellcheck: true,
+    status: false,
+    minHeight: "55vh",
+    uploadImage: true,
+    imageUploadEndpoint: "/courses/{{ course.code }}/attachments",
+    imagePathAbsolute: true,
+    imageMaxSize: 10 * 1024 * 1024,
+    imageAccept: "image/png, image/jpeg, image/gif, image/webp",
+    renderingConfig: { codeSyntaxHighlighting: !!window.hljs },
+    toolbar: ["bold", "italic", "heading", "|", "code", "quote", "unordered-list", "ordered-list", "|",
+              "link", "upload-image", "table", "|", "preview", "side-by-side", "fullscreen"],
+    // Preview uses the same server renderer as view mode, so [[D325]] links look the same.
+    previewRender: function (text, preview) {
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(function () {
+        fetch("/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: text }) })
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            preview.innerHTML = html;
+            preview.classList.add("rendered");
+            preview.querySelectorAll("pre code").forEach(function (el) { if (window.hljs) hljs.highlightElement(el); });
+          });
+      }, 250);
+      return preview.innerHTML || "Rendering…";
+    }
+  });
+
+  function save() {
+    if (conflict) return;
+    if (saving) { again = true; return; }
+    saving = true; dirty = false;
+    setState("Saving…");
+    var content = mde.value();
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: content, base: base }),
+      keepalive: content.length < 60000
+    }).then(function (r) {
+      if (r.status === 409) { conflict = true; setState("Changed elsewhere (e.g. a quiz added a mistake). Copy your edit, then reload.", true); return; }
+      if (r.status === 401) { dirty = true; setState("Logged out. Log in in another tab, then press Save now.", true); return; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json().then(function (j) { base = j.version; setState(dirty ? "Unsaved" : "Saved " + j.saved_at); });
+    }).catch(function () {
+      dirty = true; setState("Not saved (offline?). Retrying…", true);
+      clearTimeout(timer); timer = setTimeout(save, 5000);
+    }).finally(function () {
+      saving = false;
+      if (again) { again = false; save(); }
+    });
+  }
+
+  mde.codemirror.on("change", function () {
+    dirty = true; if (!conflict) setState("Unsaved");
+    clearTimeout(timer); timer = setTimeout(save, 2000);
+  });
+  document.getElementById("save-now").addEventListener("click", function () { clearTimeout(timer); save(); });
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); clearTimeout(timer); save(); }
+  });
+  window.addEventListener("beforeunload", function (e) {
+    if (dirty || saving) { save(); e.preventDefault(); e.returnValue = ""; }
+  });
+})();
+</script>
+{% else %}
+{% include "courses/_hljs_run.html" %}
+{% endif %}
+{% endblock %}

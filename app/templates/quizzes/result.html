@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Quiz result · {{ course.code }} · studyvault{% endblock %}
+{% block head %}{% include "courses/_hljs_head.html" %}{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% set pct = (100 * attempt.score / attempt.total)|round|int %}
+<section class="card">
+  <div class="row spread">
+    <div>
+      <div class="stat">{{ attempt.score }}/{{ attempt.total }} <small>{{ pct }}%</small></div>
+      <p class="muted small" style="margin: .2rem 0 0">Quiz #{{ attempt.id }} · {{ attempt.finished_at[:16].replace('T', ' ') }}{% if pct >= course.quiz_target %} · at or above your {{ course.quiz_target }}% target{% endif %}</p>
+    </div>
+    <div class="row">
+      {% if attempt.total - attempt.score %}<a class="button" href="/courses/{{ course.code }}/notes/mistakes?mode=edit">Fill in “why I missed it”</a>{% endif %}
+      <a class="button primary" href="/courses/{{ course.code }}/quizzes">Back to quizzes</a>
+    </div>
+  </div>
+  {% if attempt.total - attempt.score %}<p class="small">{{ attempt.total - attempt.score }} miss{{ '' if attempt.total - attempt.score == 1 else 'es' }} added to mistakes.md.</p>{% endif %}
+</section>
+<section class="card" style="margin-top: 1rem">
+  {% for q in questions %}
+  {% set a = answers.get(q.id) %}
+  <div class="q">
+    <div class="row"><strong class="{{ 'correct' if a and a.correct else 'wrong' }}">{{ '✓' if a and a.correct else '✗' }} Question {{ loop.index }}</strong></div>
+    <div class="rendered" style="border: 0; padding: 0; background: none">{{ prompts[q.id]|safe }}</div>
+    {% if q.kind == 'short' %}
+      <p class="small"><span class="muted">You:</span> {{ loads(a.given_json)[0] if a else '' }}<br><span class="muted">Model:</span> {{ loads(q.answer_json) }}</p>
+    {% else %}
+      {% set given = loads(a.given_json)|map('int')|list if a else [] %}
+      {% set right = loads(q.answer_json) %}
+      <ul class="small">
+        {% for ch in choices[q.id] %}
+        <li class="{{ 'correct' if loop.index0 in right else ('wrong' if loop.index0 in given else '') }}">
+          {{ ch }}{% if loop.index0 in given %} <span class="muted">(your pick)</span>{% endif %}{% if loop.index0 in right %} ✓{% endif %}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if q.explanation %}<div class="small rendered" style="background: var(--surface-2); border: 0">{{ explanations[q.id]|safe }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}
+{% block scripts %}{% include "courses/_hljs_run.html" %}{% endblock %}

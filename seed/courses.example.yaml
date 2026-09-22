@@ -1,0 +1,60 @@
+# Example seed: the WGU B.S. Cloud & Network Engineering – AWS course list with a sample term calendar.
+# Copy to seed/courses.yaml and edit it (terms, dates, which term each course is in) BEFORE first boot.
+# It is read once, on first boot; after that everything is edited in the UI.
+# Remaining CU must sum to 109 and reconcile with total_cu, or startup fails.
+
+program:
+  name: B.S. Cloud & Network Engineering – Amazon Web Services
+  total_cu: 112
+  transferred:
+    - { code: E004, title: Introduction to IT, cu: 3 }   # CU you transferred in; remove or edit
+
+terms:
+  - { n: 1, start: 2026-10-01, end: 2027-03-31, target_cu: 27 }
+  - { n: 2, start: 2027-04-01, end: 2027-09-30, target_cu: 30 }
+  - { n: 3, start: 2027-10-01, end: 2028-03-31, target_cu: 26 }
+  - { n: 4, start: 2028-04-01, end: 2028-09-30, target_cu: 26 }
+
+courses:
+  # Term 1
+  - { code: D413, title: Telecomm and Wireless Communications, cu: 3, term: 1, start: 2026-10-02, due: 2026-10-30, target: 2026-10-16 }
+  - { code: D282, title: Cloud Foundations, cu: 3, term: 1, start: 2026-10-30, due: 2026-11-27, target: 2026-11-06, cert: AWS Certified Cloud Practitioner }
+  - { code: D281, title: Linux Foundations, cu: 3, term: 1, start: 2026-11-27, due: 2026-12-25, target: 2026-11-20, cert: LPI Linux Essentials }
+  - { code: D339, title: Technical Communication, cu: 3, term: 1, start: 2026-12-25, due: 2027-01-29, target: 2026-12-18 }
+  - { code: D316, title: IT Foundations, cu: 4, term: 1, target: 2027-01-15, cert: CompTIA A+ Core 1 }
+  - { code: D317, title: IT Applications, cu: 4, term: 1, target: 2027-02-12, cert: CompTIA A+ Core 2 }
+  - { code: D336, title: Business of IT – Applications, cu: 4, term: 1, target: 2027-03-05, cert: ITIL 4 Foundation }
+  - { code: D333, title: Ethics in Technology, cu: 3, term: 1, target: 2027-03-26 }
+  # Term 2
+  - { code: D315, title: Network and Security – Foundations, cu: 3, term: 2 }
+  - { code: D325, title: Networks, cu: 4, term: 2, cert: CompTIA Network+ }
+  - { code: D412, title: Network Analytics and Troubleshooting, cu: 3, term: 2 }
+  - { code: D197, title: Version Control, cu: 1, term: 2 }
+  - { code: E010, title: Foundations of Programming (Python), cu: 3, term: 2 }
+  - { code: D270, title: "Composition: Successful Self-Expression", cu: 3, term: 2 }
+  - { code: C165, title: Integrated Physical Sciences, cu: 3, term: 2 }
+  - { code: C458, title: Health, Fitness, and Wellness, cu: 4, term: 2 }
+  - { code: C955, title: Applied Probability and Statistics, cu: 3, term: 2 }
+  - { code: C957, title: Applied Algebra, cu: 3, term: 2, after: C955 }
+  # Term 3
+  - { code: D522, title: Python for IT Automation, cu: 3, term: 3 }
+  - { code: D426, title: Data Management – Foundations, cu: 3, term: 3 }
+  - { code: D329, title: Network and Security – Applications, cu: 4, term: 3, cert: CompTIA Security+ }
+  - { code: D415, title: Software Defined Networking, cu: 3, term: 3 }
+  - { code: E025, title: Cloud and Network Security Models, cu: 4, term: 3 }
+  - { code: E026, title: AI for IT Automation and Security, cu: 3, term: 3 }
+  - { code: E027, title: Virtualization and IaaS, cu: 3, term: 3 }
+  - { code: D319, title: AWS Cloud Architecture, cu: 3, term: 3 }
+  # Term 4
+  - { code: E028, title: Hybrid Cloud Infrastructure and Orchestration, cu: 4, term: 4 }
+  - { code: D341, title: Cloud Deployment and Operations, cu: 3, term: 4 }
+  - { code: D337, title: Internet of Things and Infrastructure, cu: 3, term: 4 }
+  - { code: D370, title: IT Leadership Foundations, cu: 3, term: 4 }
+  - { code: D459, title: Introduction to Systems Thinking and Applications, cu: 3, term: 4 }
+  - { code: D246, title: Influential Communication through Visual Design and Storytelling, cu: 3, term: 4 }
+  - { code: D267, title: "US History: Stories of American Democracy", cu: 3, term: 4 }
+  - { code: E030, title: BSCNE-AWS Capstone Project, cu: 4, term: 4, assessment: PA }
+
+
+# Optional: certs you are pursuing outside any course.
+self_directed_certs: []

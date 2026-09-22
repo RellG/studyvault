@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, readiness_badge %}
+{% block content %}
+<div class="row spread">
+  <h1>Dashboard</h1>
+  <span class="muted small">{{ today|date("%A, %b %-d") }}{% if p.streak %} · {{ p.streak }}-day study streak{% endif %}</span>
+</div>
+
+{% if p.sap.color == 'red' %}
+<div class="banner red" role="alert"><strong>SAP below 67%:</strong> if the term ended today you'd have passed {{ (p.sap.ratio * 100)|round|int }}% of attempted CU ({{ p.sap.passed }} of {{ p.sap.attempted }}; courses count as attempted once started). Below 67% puts financial aid eligibility at risk. Finish what's in progress before adding more, and talk to your mentor if it stays red.</div>
+{% endif %}
+
+<section class="grid dash">
+  {# ---- current term ---- #}
+  {% set pace = p.pace %}
+  <div class="card">
+    <h2><a href="/terms/{{ pace.n }}">Term {{ pace.n }}</a></h2>
+    {% if not pace.started %}
+      <div class="stat">{{ pace.starts_in }}<small> days until it starts</small></div>
+      <p class="small muted">{{ pace.planned }} CU planned · target {{ pace.target }} CU</p>
+    {% else %}
+      <div class="stat">{{ pace.passed }}<small> / {{ pace.target }} CU</small></div>
+      <div class="meter"><span style="width: {{ [100, pace.passed / pace.target * 100]|min }}%"></span></div>
+      <p class="small">{{ pace.days_remaining }} days left.
+        At this rate you finish Term {{ pace.n }} with <strong class="{{ 'correct' if pace.on_pace else 'wrong' }}">{{ '%g'|format(pace.projected) }} CU</strong>
+        {{ '(on pace)' if pace.on_pace else '(behind the ' ~ pace.target ~ ' CU target)' }}.</p>
+    {% endif %}
+    {% if p.term1.ok %}<p class="small correct">✓ Term 1 minimum (3 CU) met</p>
+    {% else %}<p class="small"><span class="badge amber">Term 1 needs ≥ 3 CU passed</span> {{ p.term1.needed }} to go</p>{% endif %}
+  </div>
+
+  {# ---- next up ---- #}
+  <div class="card">
+    <h2>Next up</h2>
+    {% if next %}{% set c = next.course %}
+      <p style="margin: 0"><a href="/courses/{{ c.code }}"><strong>{{ c.code }}</strong> {{ c.title }}</a></p>
+      <p class="small muted">{{ status(c.status) }} · target {{ c.target|date }}{% if c.due %} · mentor due {{ c.due|date }}{% endif %}</p>
+      <p>Readiness {{ readiness_badge(next.ready) }} · {{ next.due }} card{{ '' if next.due == 1 else 's' }} due</p>
+      <div class="actions" style="margin-top: .4rem">
+        {% if next.due %}<a class="button primary small" href="/review?course={{ c.code }}">Review {{ next.due }}</a>{% endif %}
+        {% if not active_session %}
+        <form method="post" action="/sessions/start" style="margin: 0"><input type="hidden" name="course_code" value="{{ c.code }}">
+          <button class="small" type="submit">Start studying {{ c.code }}</button></form>
+        {% endif %}
+      </div>
+    {% else %}<p class="muted">Nothing left in this term. Nice.</p>{% endif %}
+  </div>
+
+  {# ---- program ---- #}
+  <div class="card">
+    <h2>Program</h2>
+    <div class="stat">{{ p.passed_cu }}<small> / {{ p.remaining_total }} CU passed</small></div>
+    <div class="meter"><span style="width: {{ (p.passed_cu / p.remaining_total * 100) if p.remaining_total else 0 }}%"></span></div>
+    <p class="small muted">+ {{ p.transferred }} CU transferred (E004) · {{ program.total_cu }} CU program</p>
+    {% set g = p.grad %}
+    <p class="small">Projected graduation:
+      {% if g.status == 'ok' %}<strong class="{{ 'correct' if g.on_track else 'wrong' }}">{{ g.date|date }}</strong>
+        vs target {{ grad_target|date }} <span class="muted">({{ '%.1f'|format(g.cu_per_month) }} CU/month over {{ g.window }} days)</span>
+      {% elif g.status == 'not_enough_data' %}<span class="muted">not enough data yet (needs two weeks of activity)</span>
+      {% elif g.status == 'no_recent_passes' %}<span class="muted">no CU passed in the last {{ g.window }} days</span>
+      {% else %}🎓 done{% endif %}</p>
+  </div>
+
+  {# ---- SAP ---- #}
+  <div class="card">
+    <h2>SAP</h2>
+    {% if p.sap.ratio is none %}
+      <div class="stat">—</div><p class="small muted">No attempted courses yet. A course counts as attempted once its status leaves “Not started”.</p>
+    {% else %}
+      <div class="stat"><span class="badge {{ p.sap.color }}" style="font-size: 1.5rem">{{ (p.sap.ratio * 100)|round|int }}%</span></div>
+      <p class="small muted">{{ p.sap.passed }} passed ÷ {{ p.sap.attempted }} attempted CU. Green ≥ 80% · amber 67–80% · red &lt; 67%.</p>
+    {% endif %}
+  </div>
+
+  {# ---- flashcards + exams ---- #}
+  <div class="card">
+    <h2>Today</h2>
+    <p>{% if due_all %}<a class="button primary small" href="/review">Review {{ due_all }} due card{{ '' if due_all == 1 else 's' }}</a>{% else %}<span class="correct">✓ No cards due</span>{% endif %}</p>
+    {% if exams %}
+    <h3>Exams coming up</h3>
+    <ul class="plain">{% for e in exams %}
+      <li><strong>{{ 'today' if e.days == 0 else ('in ' ~ e.days ~ ' day' ~ ('' if e.days == 1 else 's')) }}</strong> ·
+        {% if e.code %}<a href="/courses/{{ e.code }}/assessment">{{ e.code }}</a> {% endif %}{{ e.title }} <span class="small muted">{{ e.exam_date|date("%b %-d") }}</span></li>
+    {% endfor %}</ul>
+    {% endif %}
+  </div>
+
+  <a class="card tile" href="/certs">
+    <h2>Certs</h2>
+    <div class="stat">{{ certs_earned }}<small> earned</small></div>
+  </a>
+</section>
+{% endblock %}

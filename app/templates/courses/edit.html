@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ course.code }} · studyvault{% endblock %}
+{% block content %}
+<p><a href="/courses/{{ course.code }}">← {{ course.code }}</a></p>
+<h1>Edit {{ course.code }}</h1>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+<form class="card" method="post">
+  <label for="title">Title</label>
+  <input id="title" name="title" type="text" value="{{ form.title or '' }}" required>
+  <div class="form-grid">
+    <div><label for="cu">CU</label><input id="cu" name="cu" type="number" min="1" max="12" value="{{ form.cu }}" required></div>
+    <div><label for="term_n">Term</label>
+      <select id="term_n" name="term_n">
+        <option value="none" {{ 'selected' if not form.term_n }}>Not in a term</option>
+        {% for t in terms %}<option value="{{ t.n }}" {{ 'selected' if form.term_n|string == t.n|string }}>Term {{ t.n }} ({{ t.start|date("%b %Y") }})</option>{% endfor %}
+      </select></div>
+    <div><label for="status">Status</label>
+      <select id="status" name="status">
+        {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if form.status == s }}>{{ STATUS_LABELS[s] }}</option>{% endfor %}
+      </select></div>
+    <div><label for="assessment_type">Assessment type</label>
+      <select id="assessment_type" name="assessment_type">
+        <option value="" {{ 'selected' if not form.assessment_type }}>Not set</option>
+        {% for t in types %}<option value="{{ t }}" {{ 'selected' if form.assessment_type == t }}>{{ {'OA': 'Objective assessment (OA)', 'PA': 'Performance assessment (PA)', 'cert': 'Certification exam'}[t] }}</option>{% endfor %}
+      </select></div>
+    <div><label for="start">Start</label><input id="start" name="start" type="date" value="{{ form.start or '' }}"></div>
+    <div><label for="due">Mentor due date</label><input id="due" name="due" type="date" value="{{ form.due or '' }}"></div>
+    <div><label for="target">Your target date</label><input id="target" name="target" type="date" value="{{ form.target or '' }}"></div>
+    <div><label for="exam_date">Exam date</label><input id="exam_date" name="exam_date" type="date" value="{{ form.exam_date or '' }}"></div>
+    <div><label for="passed_on">Passed on</label><input id="passed_on" name="passed_on" type="date" value="{{ form.passed_on or '' }}">
+      <p class="small muted">Filled in with today when you set status to Passed and leave this blank.</p></div>
+    <div><label for="cert_name">Linked certification</label><input id="cert_name" name="cert_name" type="text" value="{{ form.cert_name or '' }}"></div>
+  </div>
+  <p><label class="inline"><input type="checkbox" name="approved" value="1" {{ 'checked' if form.approved|string in ['1', 'on', 'True'] }}> Mentor-approved</label></p>
+  <p class="small muted">A course counts as <em>attempted</em> for SAP as soon as its status leaves "Not started", and stays attempted.</p>
+  <div class="actions"><button class="primary" type="submit">Save</button><a class="button" href="/courses/{{ course.code }}">Cancel</a></div>
+</form>
+{% endblock %}
