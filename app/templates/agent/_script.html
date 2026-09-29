@@ -1,0 +1,23 @@
+<script>
+  // A reply can take a while (several lookups): show that it's working and stop double sends.
+  document.querySelectorAll("form[data-wait]").forEach(function (f) {
+    f.addEventListener("submit", function () {
+      var w = f.querySelector(".ask-wait");
+      if (w) w.hidden = false;
+      f.querySelectorAll("button").forEach(function (b) { setTimeout(function () { b.disabled = true; }, 0); });
+    });
+    var t = f.querySelector("textarea[name=text]");
+    if (t) t.addEventListener("keydown", function (e) {  // Ctrl/Cmd+Enter sends
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && t.value.trim()) { e.preventDefault(); f.requestSubmit(); }
+    });
+  });
+  // "Explain…"-style prompts need the rest typed in: put the start in the box.
+  document.querySelectorAll("[data-fill]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var t = b.form.querySelector("textarea[name=text]");
+      t.value = b.dataset.fill;
+      t.focus();
+      t.setSelectionRange(t.value.length, t.value.length);
+    });
+  });
+</script>

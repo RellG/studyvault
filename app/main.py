@@ -11,7 +11,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, db, notes_fs, seed
 from .config import settings
-from .routers import ai, assessments, cards, competencies, courses, dashboard, export, notes, quizzes, search, sessions, terms
+from .routers import agent, ai, assessments, cards, competencies, courses, dashboard, export, notes, quizzes, search, sessions, terms
+from .routers import settings as settings_routes
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -92,4 +93,6 @@ app.include_router(quizzes.router)
 app.include_router(assessments.router)
 app.include_router(sessions.router)
 app.include_router(ai.router)
+app.include_router(agent.router)
 app.include_router(export.router)
+app.include_router(settings_routes.router)

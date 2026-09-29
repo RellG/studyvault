@@ -1,0 +1,84 @@
+{% set pl = p.payload %}
+<section class="card proposal {{ p.status }}" id="p{{ p.id }}">
+  <div class="row spread">
+    <strong>{{ p.label }}{% if p.code %} · {{ p.code }}{% endif %}</strong>
+    <span class="badge {{ {'pending': 'amber', 'applied': 'green'}.get(p.status, '') }}">{{ {'pending': 'Needs your OK', 'applied': 'Applied', 'dismissed': 'Dismissed'}[p.status] }}</span>
+  </div>
+  {% if p.status == 'applied' %}
+  <p class="proposal-done">{{ p.result }}{% if p.link %} <a href="{{ p.link }}">Open</a>{% endif %}</p>
+  {% elif p.status == 'dismissed' %}
+  <p class="proposal-done muted small">Dismissed. Nothing was changed.</p>
+  {% else %}
+  <form method="post" action="/ask/proposals/{{ p.id }}/apply">
+    {% set go = 'Apply' %}
+    {% if p.kind == 'cards' %}
+      <p class="small muted">Check each card against your notes. Only ticked cards are added.</p>
+      {% for c in pl.cards %}
+      <div class="proposal-item">
+        <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+        <div class="form-grid">
+          <div><label for="f{{ p.id }}_{{ loop.index0 }}">Front</label><textarea id="f{{ p.id }}_{{ loop.index0 }}" name="front_{{ loop.index0 }}" rows="2">{{ c.front }}</textarea></div>
+          <div><label for="b{{ p.id }}_{{ loop.index0 }}">Back</label><textarea id="b{{ p.id }}_{{ loop.index0 }}" name="back_{{ loop.index0 }}" rows="2">{{ c.back }}</textarea></div>
+        </div>
+      </div>
+      {% endfor %}
+      {% set go = 'Add kept cards' %}
+    {% elif p.kind == 'questions' %}
+      <p class="small muted">Check each question and its answer. Only ticked ones are added; <code>*</code> marks a correct choice.</p>
+      {% for q in pl.questions %}
+      <div class="proposal-item">
+        <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+        <input type="hidden" name="kind_{{ loop.index0 }}" value="{{ q.kind }}">
+        <label for="q{{ p.id }}_{{ loop.index0 }}">Question ({{ 'select all that apply' if q.kind == 'multi' else 'one answer' }})</label>
+        <textarea id="q{{ p.id }}_{{ loop.index0 }}" name="prompt_{{ loop.index0 }}" rows="2">{{ q.prompt }}</textarea>
+        <label for="c{{ p.id }}_{{ loop.index0 }}">Choices</label>
+        <textarea id="c{{ p.id }}_{{ loop.index0 }}" name="choices_{{ loop.index0 }}" rows="4">{{ q.choices_text }}</textarea>
+        <label for="e{{ p.id }}_{{ loop.index0 }}">Explanation</label>
+        <textarea id="e{{ p.id }}_{{ loop.index0 }}" name="explanation_{{ loop.index0 }}" rows="2">{{ q.explanation }}</textarea>
+      </div>
+      {% endfor %}
+      {% set go = 'Add kept questions' %}
+    {% elif p.kind == 'notebook' %}
+      <label for="t{{ p.id }}">Heading</label>
+      <input type="text" id="t{{ p.id }}" name="title" value="{{ pl.title }}">
+      <label for="x{{ p.id }}">Section <span class="muted small">(added at the end of the notebook, dated today)</span></label>
+      <textarea id="x{{ p.id }}" name="text" rows="10">{{ pl.text }}</textarea>
+      {% set go = 'Add to notebook' %}
+    {% elif p.kind == 'confidence' %}
+      {% set cur = current_conf.get(p.id) %}
+      <p>{{ pl.competency }} <span class="small muted">(now {{ cur[0] ~ '/5' if cur and cur[0] else 'unrated' }})</span></p>
+      <div class="row">
+        <label for="cf{{ p.id }}" class="inline">Confidence</label>
+        <select id="cf{{ p.id }}" name="confidence" class="ask-scope">
+          <option value="">Leave as is</option>
+          {% for n in range(1, 6) %}<option value="{{ n }}" {{ 'selected' if pl.confidence == n }}>{{ n }}</option>{% endfor %}
+        </select>
+        <label class="inline"><input type="checkbox" name="mark_reviewed" value="1" {{ 'checked' if pl.mark_reviewed }}> Mark reviewed today</label>
+      </div>
+      {% set go = 'Save rating' %}
+    {% elif p.kind == 'exam' %}
+      <div class="form-grid">
+        <div><label for="d{{ p.id }}">Exam date</label><input type="date" id="d{{ p.id }}" name="date" value="{{ pl.date }}"></div>
+        <div><label for="qt{{ p.id }}">Practice-quiz target % <span class="muted small">(optional)</span></label><input type="number" id="qt{{ p.id }}" name="quiz_target" min="1" max="100" value="{{ pl.quiz_target or '' }}"></div>
+      </div>
+      {% set go = 'Set exam date' %}
+    {% elif p.kind == 'quiz' %}
+      <div class="row">
+        <label for="n{{ p.id }}" class="inline">Questions</label>
+        <input type="number" id="n{{ p.id }}" name="count" min="1" max="50" value="{{ pl.count }}" class="ask-num">
+      </div>
+      {% set go = 'Start quiz' %}
+    {% elif p.kind == 'study' %}
+      <div class="form-grid">
+        <div><label for="sd{{ p.id }}">Date</label><input type="date" id="sd{{ p.id }}" name="date" value="{{ pl.date }}"></div>
+        <div><label for="sm{{ p.id }}">Minutes</label><input type="number" id="sm{{ p.id }}" name="minutes" min="1" max="960" value="{{ pl.minutes }}"></div>
+      </div>
+      {% set go = 'Log time' %}
+    {% endif %}
+    <div class="actions">
+      <button class="primary" type="submit">{{ go }}</button>
+      <button type="submit" formaction="/ask/proposals/{{ p.id }}/dismiss">Dismiss</button>
+    </div>
+  </form>
+  {% endif %}
+</section>

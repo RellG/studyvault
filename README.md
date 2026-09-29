@@ -20,6 +20,7 @@ It was built for the B.S. Cloud & Network Engineering – AWS program, but the c
 | **Practice quizzes** | Multiple choice, multi-select, self-graded short answer; timed or untimed; every miss is appended to the course's `mistakes.md` with a "why I missed it" line |
 | **OA / PA / cert prep** | Pre-assessment log with coaching-report levels, a computed readiness checklist, exam scheduling; PA rubric tasks, versioned drafts with diffs, submission log, revision counter and a term-end warning; cert vouchers, exam dates and results |
 | **Study time** | Server-side timer (survives reloads), optional Pomodoro, hours per week / course / CU |
+| **Themes** | Notebook (default; Google Sans, soft blue panels, pill buttons), Sage and Paper, each with light and dark, plus System / Light / Dark; chosen in Settings and stored server-side so every device matches |
 | **Search** | SQLite FTS5 across notes, flashcards and questions, filterable by term and course |
 | **AI assist (optional)** | Notes → flashcards, notes → practice questions, explain differently, gap check. Anthropic or Google via env config; everything comes back as a draft you accept or discard; only the text you select is sent; never used to write performance assessments |
 | **Backup & export** | Nightly SQLite backup + notes/attachments archives with checksums, 14 kept, rsync off-device; tested restore script; course export to one markdown file or a print-to-PDF page |
@@ -68,7 +69,7 @@ scripts/restore.sh [snapshot]     # into an empty data/ with the app stopped; ve
 ## Development
 
 - Code: `app/` (FastAPI routers in `app/routers/`, Jinja2 templates, HTMX, vanilla JS), migrations in `app/migrations/`.
-- Tests: `python -m pytest` inside the image (119 tests: SM-2, readiness, SAP/pace math, seed, notes filesystem, search, quizzes, assessments, AI client with mocked providers).
+- Tests: `python -m pytest` inside the image (126 tests: SM-2, readiness, SAP/pace math, seed, notes filesystem, search, quizzes, assessments, AI client with mocked providers).
 - Browser checks: `scripts/scratch-instance.sh up` starts a throwaway copy on `127.0.0.1:8421` with empty data (password `scratch`); `node tests/ui/ui_check.js` runs phone- and desktop-sized checks against it through a Chromium with remote debugging (`SV_CDP`, `SV_PLAYWRIGHT` to point at your Playwright install).
 - Deploying from another machine: `STUDYVAULT_HOST=user@pi bash scripts/deploy.sh` (or put `STUDYVAULT_HOST=` in a git-ignored `.deploy.env`). It never touches `data/` or `.env`.
 
@@ -80,4 +81,4 @@ studyvault is for your own notes and self-testing. It doesn't scrape or store WG
 
 studyvault is released under the [MIT License](LICENSE).
 
-Vendored in `app/static/vendor/`: [htmx](https://htmx.org) 2.0.4, [EasyMDE](https://github.com/Ionaru/easy-markdown-editor) 2.18.0, [highlight.js](https://highlightjs.org) 11.9.0, [Font Awesome](https://fontawesome.com/v4/) 4.7.0. Each is under its own license.
+Vendored in `app/static/vendor/`: fonts Google Sans Flex, Google Sans Code, Newsreader, IBM Plex Sans and JetBrains Mono (SIL Open Font License, latin subsets, via Google Fonts), [htmx](https://htmx.org) 2.0.4, [EasyMDE](https://github.com/Ionaru/easy-markdown-editor) 2.18.0, [highlight.js](https://highlightjs.org) 11.9.0, [Font Awesome](https://fontawesome.com/v4/) 4.7.0. Each is under its own license.

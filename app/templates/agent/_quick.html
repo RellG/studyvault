@@ -1,0 +1,4 @@
+<div class="quick-prompts" role="group" aria-label="Quick prompts">
+  {% for q in quick %}<button type="submit" name="quick" value="{{ q }}" class="small chip">{{ q }}</button>{% endfor %}
+  {% for f in fill %}<button type="button" class="small chip" data-fill="{{ f }}">{{ f.rstrip(': ') }}…</button>{% endfor %}
+</div>

@@ -7,4 +7,5 @@
   <a href="/courses/{{ course.code }}/notes/mistakes" class="{{ 'active' if tab == 'mistakes' }}">Mistakes</a>
   <a href="/courses/{{ course.code }}/assessment" class="{{ 'active' if tab in ('assessment', 'pa') }}">{{ {'OA': 'OA prep', 'PA': 'PA workspace', 'cert': 'Cert prep'}.get(course.assessment_type, 'Assessment') }}</a>
   {% if ai_enabled %}<a href="/courses/{{ course.code }}/ai" class="{{ 'active' if tab == 'ai' }}">AI assist</a>{% endif %}
+  {% if ai_enabled %}<a href="/ask?course={{ course.code }}">Ask</a>{% endif %}
 </nav>

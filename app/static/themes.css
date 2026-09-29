@@ -1,0 +1,80 @@
+/* studyvault themes. Chosen on /settings; stored server-side and stamped on <html> as data-theme + data-mode.
+   data-mode: "light" | "dark" | "auto" (follow the device). Each theme defines a light palette on
+   :root[data-theme=X], and a dark palette for [data-mode=dark] and for [data-mode=auto] on a dark device.
+   Notebook is the default theme. "sage" (the first look) keeps its light tokens in app.css; only its forced-dark block is here. */
+
+/* ------------------------------------------------------------------ sage (default) */
+:root[data-theme="sage"][data-mode="dark"] {
+  --bg: #121416; --surface: #1b1e21; --surface-2: #24282c; --text: #e6e6e3; --muted: #9ba1a6; --border: #33383d;
+  --accent: #4fb89b; --accent-ink: #0e1a16; --accent-soft: #1d3a32;
+  --green: #5cc27f; --green-soft: #1b3324; --amber: #e0a940; --amber-soft: #3a2f16; --red: #f07a70; --red-soft: #3d1f1d;
+  --blue-soft: #1f2a38; color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ notebook: Google Sans, soft blue panels, pills */
+:root[data-theme="notebook"] {
+  --bg: #ffffff; --surface: #f3f6fb; --surface-2: #e7edf6; --text: #1f1f1f; --muted: #5f6368; --border: #dadce0;
+  --accent: #0b57d0; --accent-ink: #ffffff; --accent-soft: #d3e3fd;
+  --green: #146c2e; --green-soft: #dcf4e2; --amber: #8a5300; --amber-soft: #fcefd2; --red: #b3261e; --red-soft: #fce4e2;
+  --blue-soft: #e8f0fe;
+  --primary-bg: #1f1f1f; --primary-ink: #ffffff;
+  --radius: 24px; --radius-btn: 999px; --radius-ctl: 14px;
+  --font-ui: "Google Sans Flex", "Google Sans", system-ui, sans-serif;
+  --font-heading: var(--font-ui); --font-reading: var(--font-ui); --heading-weight: 500;
+  --mono: "Google Sans Code", ui-monospace, Menlo, Consolas, monospace;
+  --shadow: none; --brand-gradient: linear-gradient(90deg, #3186ff 40%, #7f9cff 100%);
+  color-scheme: light;
+}
+:root[data-theme="notebook"][data-mode="dark"] {
+  --bg: #131314; --surface: #1e1f20; --surface-2: #282a2c; --text: #e3e3e3; --muted: #a2a9b0; --border: #3c4043;
+  --accent: #a8c7fa; --accent-ink: #062e6f; --accent-soft: #1f3760;
+  --green: #6dd58c; --green-soft: #0f3a1f; --amber: #f2c46b; --amber-soft: #3d3013; --red: #f2b8b5; --red-soft: #442422;
+  --blue-soft: #1c2b41; --primary-bg: #e3e3e3; --primary-ink: #1f1f1f;
+  --brand-gradient: linear-gradient(90deg, #7cacf8 30%, #b7c5ff 100%); color-scheme: dark;
+}
+:root[data-theme="notebook"] .card, :root[data-theme="notebook"] .comp-row { border-color: transparent; }
+:root[data-theme="notebook"] .rendered { border-color: transparent; }
+:root[data-theme="notebook"] .brand { background: var(--brand-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+:root[data-theme="notebook"] h1 { font-size: 1.9rem; letter-spacing: -.01em; }
+:root[data-theme="notebook"] .topbar { border-bottom-color: transparent; }
+:root[data-theme="notebook"] .tabs a.active { border-bottom-width: 3px; }
+
+/* ------------------------------------------------------------------ paper: serif reading, warm cream, ink blue */
+:root[data-theme="paper"] {
+  --bg: #f7f3ea; --surface: #fffdf8; --surface-2: #f0eadc; --text: #2a2622; --muted: #6b635a; --border: #e2d9c6;
+  --accent: #2d4a7a; --accent-ink: #ffffff; --accent-soft: #e2e8f2;
+  --green: #2f6b36; --green-soft: #e3efdc; --amber: #8a5a14; --amber-soft: #f6ead0; --red: #a3342a; --red-soft: #f7e0da;
+  --blue-soft: #e6ebf3;
+  --radius: 6px; --radius-btn: 6px; --radius-ctl: 6px;
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-heading: "Newsreader", Georgia, "Times New Roman", serif; --font-reading: var(--font-heading); --heading-weight: 600;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --shadow: 0 1px 0 rgba(60,45,20,.06);
+  color-scheme: light;
+}
+:root[data-theme="paper"][data-mode="dark"] {
+  --bg: #1a1815; --surface: #22201c; --surface-2: #2c2924; --text: #ece6da; --muted: #a9a194; --border: #3a362f;
+  --accent: #9db4de; --accent-ink: #14213a; --accent-soft: #26324a;
+  --green: #8fc98a; --green-soft: #1f3020; --amber: #e0b56a; --amber-soft: #3a2f18; --red: #ec9a8e; --red-soft: #402320;
+  --blue-soft: #232c3b; color-scheme: dark;
+}
+:root[data-theme="paper"] .rendered { font-size: 1.08rem; line-height: 1.65; }
+:root[data-theme="paper"] h1 { font-size: 1.85rem; }
+
+/* ------------------------------------------------------------------ System mode on a dark device: same dark palettes */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="notebook"][data-mode="auto"] {
+    --bg: #131314; --surface: #1e1f20; --surface-2: #282a2c; --text: #e3e3e3; --muted: #a2a9b0; --border: #3c4043;
+    --accent: #a8c7fa; --accent-ink: #062e6f; --accent-soft: #1f3760;
+    --green: #6dd58c; --green-soft: #0f3a1f; --amber: #f2c46b; --amber-soft: #3d3013; --red: #f2b8b5; --red-soft: #442422;
+    --blue-soft: #1c2b41; --primary-bg: #e3e3e3; --primary-ink: #1f1f1f;
+    --brand-gradient: linear-gradient(90deg, #7cacf8 30%, #b7c5ff 100%); color-scheme: dark;
+  }
+  :root[data-theme="paper"][data-mode="auto"] {
+    --bg: #1a1815; --surface: #22201c; --surface-2: #2c2924; --text: #ece6da; --muted: #a9a194; --border: #3a362f;
+    --accent: #9db4de; --accent-ink: #14213a; --accent-soft: #26324a;
+    --green: #8fc98a; --green-soft: #1f3020; --amber: #e0b56a; --amber-soft: #3a2f18; --red: #ec9a8e; --red-soft: #402320;
+    --blue-soft: #232c3b; color-scheme: dark;
+  }
+}
+

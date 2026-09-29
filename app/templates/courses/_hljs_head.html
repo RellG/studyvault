@@ -1,3 +1,4 @@
-<link rel="stylesheet" href="/static/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
-<link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
+{% set m = mode|default('auto') %}
+{% if m != 'dark' %}<link rel="stylesheet" href="/static/vendor/hljs-github.min.css"{% if m == 'auto' %} media="(prefers-color-scheme: light)"{% endif %}>{% endif %}
+{% if m != 'light' %}<link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css"{% if m == 'auto' %} media="(prefers-color-scheme: dark)"{% endif %}>{% endif %}
 <script src="/static/vendor/highlight.min.js"></script>

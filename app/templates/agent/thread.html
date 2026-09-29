@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ thread.title }} · Ask · studyvault{% endblock %}
+{% block content %}
+<a href="/ask" class="small">← All chats</a>
+<div class="row spread">
+  <h1 class="ask-title">{{ thread.title }} {% if thread.code %}<span class="badge accent">{{ thread.code }}</span>{% endif %}</h1>
+  <form method="post" action="/ask/{{ thread.id }}/delete" onsubmit="return confirm('Delete this chat? Anything you applied stays.')">
+    <button class="link" type="submit">Delete chat</button></form>
+</div>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+
+<div class="chat">
+  {% for m in messages %}
+  <div class="msg {{ m.role }}"{% if loop.last %} id="latest"{% endif %}>
+    {% if m.role == 'user' %}
+    <div class="bubble">{{ m.text }}</div>
+    {% else %}
+    {% if m.meta.tools %}<div class="tools-used small muted">Looked at: {{ m.meta.tools|join(' · ') }}</div>{% endif %}
+    {% if m.html %}<div class="rendered answer">{{ m.html|safe }}</div>{% endif %}
+    {% if m.meta.error %}<div class="banner red" role="alert">{{ m.meta.error }} <span class="small">Your message is kept. Send it again, or try in a minute.</span></div>{% endif %}
+    {% for p in m.proposals %}{% include "agent/_proposal.html" %}{% endfor %}
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<form class="card" method="post" action="/ask/{{ thread.id }}/send" data-wait>
+  <label for="ask-text">Message</label>
+  <textarea id="ask-text" name="text" rows="3" maxlength="4000" class="ask-box" placeholder="Reply, or ask something else…"></textarea>
+  <div class="row spread" style="margin-top: .6rem">
+    <span class="small muted">Model: {{ provider }} · Ctrl+Enter sends</span>
+    <button class="primary" type="submit">Send</button>
+  </div>
+  {% include "agent/_quick.html" %}
+  <p class="small muted ask-wait" hidden>Thinking… looking things up can take up to a minute.</p>
+</form>
+{% endblock %}
+{% block scripts %}{% include "agent/_script.html" %}{% endblock %}

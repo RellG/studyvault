@@ -6,7 +6,7 @@
   </div>
   <div class="row">
     {{ status(course.status) }}
-    {% if not active_session %}<form method="post" action="/sessions/start" style="margin: 0"><input type="hidden" name="course_code" value="{{ course.code }}"><button class="small" type="submit" title="Start the study timer">⏱ Study</button></form>{% endif %}
+    {% if not active_session %}<form method="post" action="/sessions/start" style="margin: 0"><input type="hidden" name="course_code" value="{{ course.code }}"><button class="small" type="submit" title="Start the study timer">{% include "_clock.html" %} Study</button></form>{% endif %}
     <a class="button small no-print" href="/courses/{{ course.code }}/export" title="Single file for offline review">Export</a>
     <a class="button small" href="/courses/{{ course.code }}/edit">Edit</a>
   </div>

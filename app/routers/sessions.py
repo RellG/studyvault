@@ -1,6 +1,6 @@
 """Study timer (server-side start time, so it survives reloads) and study-hour analytics."""
 from datetime import date, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -65,21 +65,29 @@ def stop(request: Request, conn=Depends(get_db)):
     return RedirectResponse(_back(request), status_code=303)
 
 
-@router.post("/sessions/manual")
-def manual(course_code: str = Form(""), day: str = Form(""), minutes: str = Form(""), conn=Depends(get_db)):
-    c = catalog.get_course(conn, course_code) if course_code else None
+def add_manual(conn, course, day: str, minutes: str) -> None:
+    """Log study time done away from the timer. Raises ValueError with a message for the user."""
     try:
         d = date.fromisoformat(day)
         m = float(minutes)
     except ValueError:
-        return RedirectResponse("/sessions?error=Date+and+minutes+are+required", status_code=303)
+        raise ValueError("Date and minutes are required")
     if not 0 < m <= 16 * 60:
-        return RedirectResponse("/sessions?error=Minutes+must+be+between+1+and+960", status_code=303)
+        raise ValueError("Minutes must be between 1 and 960")
     start_at = f"{d.isoformat()}T12:00:00"
     end_at = (datetime.fromisoformat(start_at) + timedelta(minutes=m)).isoformat()
     with conn:
         conn.execute("INSERT INTO sessions(course_id, started_at, ended_at, minutes) VALUES (?, ?, ?, ?)",
-                     (c["id"] if c else None, start_at, end_at, m))
+                     (course["id"] if course else None, start_at, end_at, m))
+
+
+@router.post("/sessions/manual")
+def manual(course_code: str = Form(""), day: str = Form(""), minutes: str = Form(""), conn=Depends(get_db)):
+    c = catalog.get_course(conn, course_code) if course_code else None
+    try:
+        add_manual(conn, c, day, minutes)
+    except ValueError as e:
+        return RedirectResponse("/sessions?" + urlencode({"error": str(e)}), status_code=303)
     return RedirectResponse("/sessions?ok=1", status_code=303)
 
 

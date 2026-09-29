@@ -91,6 +91,28 @@ def test_one_retry_then_success(monkeypatch, mock_api):
     assert ai.complete("x") == "ok" and len(mock_api) == 2
 
 
+def gemini_429(delay):
+    return httpx.Response(429, json={"error": {"code": 429, "details": [
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay}]}})
+
+
+def test_rate_limit_waits_as_asked(monkeypatch, mock_api):
+    use(monkeypatch)
+    slept = []
+    monkeypatch.setattr(ai.time, "sleep", slept.append)
+    replies = iter([gemini_429("3s"), gemini_429("2s"), anthropic_reply("ok")])
+    mock_api.set(lambda r: next(replies))
+    assert ai.complete("x") == "ok" and len(mock_api) == 3 and slept == [3.5, 2.5]
+
+
+def test_rate_limit_with_long_wait_fails_at_once(monkeypatch, mock_api):
+    use(monkeypatch)
+    mock_api.set(lambda r: gemini_429("3600s"))
+    with pytest.raises(ai.AIError, match="usage limit is used up"):
+        ai.complete("x")
+    assert len(mock_api) == 1
+
+
 def test_network_down(monkeypatch, mock_api):
     use(monkeypatch)
 

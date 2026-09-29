@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Settings · studyvault{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% if request.query_params.get('saved') %}<div class="banner green" role="status">Saved. Every device uses this look now.</div>{% endif %}
+<form method="post" action="/settings">
+  <section class="card">
+    <h2>Theme</h2>
+    <div class="theme-grid">
+      {% for key, t in themes.items() %}
+      <label class="theme-option">
+        <input type="radio" name="theme" value="{{ key }}" {{ 'checked' if theme == key }}>
+        <span class="theme-card">
+          <span class="theme-swatches" aria-hidden="true">
+            {% for c in t.light %}<i style="background: {{ c }}"></i>{% endfor %}
+            <b></b>
+            {% for c in t.dark %}<i style="background: {{ c }}"></i>{% endfor %}
+          </span>
+          <span class="theme-sample" style="font-family: {{ t.heading }}">Aa  Subnetting, step by step</span>
+          <span class="theme-ui" style="font-family: {{ t.ui }}">
+            <strong>{{ t.name }}</strong> <span class="muted small">{{ t.fonts }}</span><br>
+            <span class="small">{{ t.blurb }}</span>
+          </span>
+          <span class="theme-btn" style="background: {{ t.btn }}; color: {{ t.btn_ink }}; border-radius: {{ t.radius }}; font-family: {{ t.ui }}" aria-hidden="true">{% include "_pencil.html" %} Write</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="card" style="margin-top: 1rem">
+    <h2>Light or dark</h2>
+    <div class="row">
+      {% for key, label in modes.items() %}
+      <label class="inline mode-option"><input type="radio" name="mode" value="{{ key }}" {{ 'checked' if mode == key }}> {{ label }}{% if key == 'auto' %} <span class="muted small">(follows your phone / computer)</span>{% endif %}</label>
+      {% endfor %}
+    </div>
+  </section>
+  <div class="actions"><button class="primary" type="submit">Save</button></div>
+</form>
+{% endblock %}

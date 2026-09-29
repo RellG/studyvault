@@ -106,7 +106,7 @@ def test_sessions_and_dashboard(client):
                     follow_redirects=False)
     assert r.headers["location"] == "/courses/D413"
     page = client.get("/courses/D413").text
-    assert "timer-pill" in page and "⏱ D413" in page
+    assert "timer-pill" in page and "D413 <span class=\"js-elapsed\"" in page
     assert 'id="pomo"' in client.get("/sessions").text
     client.post("/sessions/stop")
     assert "timer-pill" not in client.get("/").text

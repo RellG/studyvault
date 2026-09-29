@@ -8,7 +8,7 @@
 <section class="cols main-side">
   <div>
     <div class="row spread"><h2 style="margin-top: 0">Overview</h2>
-      <a class="button small" href="/courses/{{ course.code }}/notes/overview?mode=edit">Edit overview</a></div>
+      <a class="button small primary write" href="/courses/{{ course.code }}/notes/overview?mode=edit" title="Write in the overview">{% include "_pencil.html" %} Write</a></div>
     <article class="rendered">{{ html|safe }}</article>
   </div>
   <aside class="stack">

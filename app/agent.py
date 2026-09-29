@@ -1,0 +1,662 @@
+"""Study agent (PLAN Slice 11): a chat that looks things up across the vault with tools and proposes changes.
+
+Read tools run as soon as the model calls them. Write tools never change anything: they store a proposal that the
+chat shows as a card, and only the user's Apply (apply() below, called from routers/agent.py) carries it out.
+PA drafts are out of reach: no tool reads pa/, search drops pa/ hits, and the system prompt forbids PA drafting.
+"""
+import html
+import json
+import logging
+import re
+
+from . import ai, assessments, cards, catalog, clock, competencies as comp, notes_fs, progress, quizzes, readiness
+
+log = logging.getLogger("studyvault.agent")
+
+MAX_ROUNDS = 6            # model calls per message: keeps free-tier request counts low
+MAX_CALLS_PER_ROUND = 8
+RESULT_CHARS = 4000       # per tool result sent back to the model
+NOTE_CHARS = 8000         # read_note / get_mistakes get more room
+HISTORY_MESSAGES = 20     # earlier messages resent each turn (final text only, not their lookups)
+MAX_MESSAGE_CHARS = 4000
+READABLE_NOTES = ["overview", "competencies", "notebook", "mistakes"]
+
+
+class ToolError(Exception):
+    """Goes back to the model as {"error": ...} so it can correct itself."""
+
+
+class ApplyError(Exception):
+    """Shown to the user on the proposal card."""
+
+
+class Ctx:
+    def __init__(self, conn, thread):
+        self.conn = conn
+        self.thread = thread
+        self.proposals: list[int] = []
+
+
+TOOLS: dict[str, dict] = {}
+
+
+def tool(name, kind, label, description, properties=None, required=()):
+    def deco(fn):
+        TOOLS[name] = {"kind": kind, "label": label, "fn": fn, "schema": {
+            "name": name, "description": description,
+            "parameters": {"type": "object", "properties": properties or {}, "required": list(required)}}}
+        return fn
+    return deco
+
+
+CODE = {"type": "string", "description": "Course code, e.g. D413"}
+COMP = {"type": "integer", "description": "Competency id from list_competencies (optional)"}
+
+
+def _course(conn, code):
+    c = catalog.get_course(conn, str(code).strip()) if code else None
+    if not c:
+        raise ToolError(f"No course “{code}”. Call list_courses for the codes.")
+    return c
+
+
+def _comp_id(conn, course, value):
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        cid = int(value)
+    except (TypeError, ValueError):
+        raise ToolError("competency_id must be a number from list_competencies.")
+    if not conn.execute("SELECT 1 FROM competencies WHERE id = ? AND course_id = ?", (cid, course["id"])).fetchone():
+        raise ToolError(f"Competency {cid} isn't in {course['code']}. Call list_competencies.")
+    return cid
+
+
+def _pick(row, *keys):
+    return {k: row[k] for k in keys}
+
+
+# ---------------------------------------------------------------- read tools
+
+@tool("get_overview", "read", "progress overview",
+      "Degree progress at a glance: today's date, current term and pace, SAP completion rate, CU passed and remaining, "
+      "projected graduation, study streak, cards due today, the course to work on next, and upcoming exams.")
+def get_overview(ctx):
+    from .routers.dashboard import next_up, upcoming_exams
+    conn, today = ctx.conn, clock.today()
+    p = progress.load(conn, today)
+    nu = next_up(conn, p["term"])
+    program = conn.execute("SELECT name, total_cu FROM program").fetchone()
+    return {"today": today.isoformat(), "weekday": today.strftime("%A"),
+            "program": dict(program) if program else None,
+            "current_term": dict(p["term"]) if p["term"] else None, "term_pace": p["pace"],
+            "sap": p["sap"], "term1_check": p["term1"], "cu_passed": p["passed_cu"], "cu_in_plan": p["remaining_total"],
+            "cu_transferred": p["transferred"], "projected_graduation": p["grad"],
+            "graduation_target": progress.GRAD_TARGET, "study_streak_days": p["streak"],
+            "cards_due_today": cards.due_count(conn),
+            "next_up": {**_pick(nu["course"], "code", "title", "status"), "readiness": nu["ready"]["score"],
+                        "cards_due": nu["due"]} if nu else None,
+            "upcoming_exams": upcoming_exams(conn, today)}
+
+
+@tool("list_courses", "read", "course list",
+      "Every course in the plan with term, status, CU, assessment type (OA/PA/cert), start/due/target dates, exam "
+      "date and readiness (0-100). Optionally only one term.",
+      {"term": {"type": "integer", "description": "Term number (optional)"}})
+def list_courses(ctx, term=None):
+    conn = ctx.conn
+    sql = "SELECT c.*, t.n AS term_n FROM courses c LEFT JOIN terms t ON t.id = c.term_id"
+    rows = conn.execute(sql + (" WHERE t.n = ?" if term else "") + " ORDER BY t.n IS NULL, t.n, c.ord, c.code",
+                        (int(term),) if term else ()).fetchall()
+    terms = [_pick(t, "n", "start", "end", "target_cu") for t in catalog.list_terms(conn)]
+    return {"terms": terms, "courses": [
+        {**_pick(r, "code", "title", "cu", "term_n", "status", "assessment_type", "start", "due", "target",
+                 "exam_date", "cert_name"),
+         "readiness": readiness.for_course(conn, r["id"])["score"] if r["status"] != "passed" else None}
+        for r in rows]}
+
+
+@tool("get_course", "read", "course",
+      "One course in detail: dates and status, readiness score and its parts, weakest competencies, the exam-prep "
+      "checklist, pre-assessment results, card and question-bank counts, and PA task progress (status only).",
+      {"code": CODE}, ["code"])
+def get_course(ctx, code):
+    conn = ctx.conn
+    c = _course(conn, code)
+    r = readiness.for_course(conn, c["id"])
+    out = {"course": _pick(c, "code", "title", "cu", "term_n", "status", "assessment_type", "start", "due", "target",
+                           "exam_date", "quiz_target", "cert_name", "passed_on"),
+           "readiness": {"score": r["score"], "parts_percent": {r["labels"][k]: None if v is None else round(100 * v)
+                                                                for k, v in r["components"].items()}},
+           "weakest_competencies": [_pick(w, "id", "text", "confidence", "last_reviewed")
+                                    for w in comp.weakest(conn, c["id"])],
+           "exam_prep_checklist": assessments.checklist(conn, c),
+           "preassessments": [{k: p[k] for k in ("taken_on", "score", "passed")}
+                              for p in assessments.preassessments(conn, c["id"])[:5]],
+           "cards": {"total": conn.execute("SELECT COUNT(*) FROM cards WHERE course_id = ?", (c["id"],)).fetchone()[0],
+                     "due": cards.due_count(conn, c["id"])},
+           "question_bank": len(quizzes.bank(conn, c["id"]))}
+    if c["assessment_type"] == "PA":
+        out["pa_tasks"] = {row[0]: row[1] for row in conn.execute(
+            "SELECT status, COUNT(*) FROM pa_tasks WHERE course_id = ? GROUP BY status", (c["id"],))}
+    return out
+
+
+@tool("search_notes", "read", "search",
+      "Full-text search across notes, flashcards and practice questions. Returns where each hit is and a snippet.",
+      {"query": {"type": "string", "description": "Words to search for"}, "code": CODE}, ["query"])
+def search_notes(ctx, query, code=None):
+    from .routers.search import search
+    if code:
+        _course(ctx.conn, code)
+    hits = [h for h in search(ctx.conn, str(query), code=code or None, limit=20) if "/notes/pa/" not in h["url"]]
+    clean = lambda s: html.unescape(re.sub(r"</?mark>", "", s))  # noqa: E731
+    return {"results": [{"where": h["label"], "kind": h["kind"], "link": h["url"], "snippet": clean(h["snippet"])}
+                        for h in hits[:12]]} if hits else {"results": [], "note": "No matches."}
+
+
+@tool("read_note", "read", "notes",
+      "Read one of a course's note files: overview, competencies, notebook or mistakes. Give `section` (a ## heading) "
+      "to read just that part. Long files are cut off and list their section headings.",
+      {"code": CODE, "name": {"type": "string", "enum": READABLE_NOTES},
+       "section": {"type": "string", "description": "A ## heading in that file (optional)"}}, ["code", "name"])
+def read_note(ctx, code, name, section=None):
+    c = _course(ctx.conn, code)
+    if name not in READABLE_NOTES:
+        raise ToolError("name must be overview, competencies, notebook or mistakes. PA drafts are off limits.")
+    text, _ = notes_fs.read_note(c, name)
+    secs = cards.sections(text)
+    if section:
+        match = next((h for h in secs if h.lower() == str(section).strip().lower()), None)
+        if match is None:
+            raise ToolError(f"No section “{section}”. Sections: {', '.join(h for h in secs if h) or 'none'}")
+        text = f"## {match}\n{secs[match]}"
+    out = {"link": f"/courses/{c['code']}/notes/{name}", "text": text.strip() or "(empty)"}
+    if len(text) > NOTE_CHARS:
+        out.update(text=text[:NOTE_CHARS], truncated=True, sections=[h for h in secs if h])
+    return out
+
+
+@tool("list_competencies", "read", "competencies",
+      "A course's competencies with id, confidence (1-5, null = unrated), last reviewed date, and how many cards "
+      "and questions are linked to each.", {"code": CODE}, ["code"])
+def list_competencies(ctx, code):
+    conn = ctx.conn
+    c = _course(conn, code)
+    n_cards = dict(conn.execute("SELECT competency_id, COUNT(*) FROM cards WHERE course_id = ? GROUP BY competency_id", (c["id"],)).fetchall())
+    n_qs = dict(conn.execute("SELECT competency_id, COUNT(*) FROM questions WHERE course_id = ? GROUP BY competency_id", (c["id"],)).fetchall())
+    rows = comp.list_for(conn, c["id"])
+    if not rows:
+        return {"competencies": [], "note": "No competencies imported yet (Competencies tab)."}
+    return {"competencies": [{**_pick(r, "id", "text", "confidence", "last_reviewed"),
+                              "cards": n_cards.get(r["id"], 0), "questions": n_qs.get(r["id"], 0)} for r in rows]}
+
+
+@tool("get_card_stats", "read", "flashcards",
+      "Flashcard counts per course (total, due today, reviewed today, AI-made) and the hardest cards "
+      "(most often graded Again). Optionally one course.", {"code": CODE})
+def get_card_stats(ctx, code=None):
+    conn, today = ctx.conn, clock.today().isoformat()
+    where, params = ("WHERE c.code = ?", [_course(conn, code)["code"]]) if code else ("", [])
+    per = conn.execute(f"""SELECT c.id, c.code, COUNT(*) AS total, SUM(k.due_on <= ?) AS due,
+                                  SUM(k.source = 'ai-accepted') AS ai_made
+                           FROM cards k JOIN courses c ON c.id = k.course_id {where} GROUP BY c.id ORDER BY c.ord""",
+                       [today, *params]).fetchall()
+    hard = conn.execute(f"""SELECT c.code, k.front, k.back, SUM(r.grade = 1) AS again, COUNT(r.id) AS reviews
+                            FROM reviews r JOIN cards k ON k.id = r.card_id JOIN courses c ON c.id = k.course_id {where}
+                            GROUP BY k.id HAVING again > 0 ORDER BY again DESC, reviews DESC LIMIT 8""", params).fetchall()
+    return {"courses": [{**_pick(r, "code", "total", "due", "ai_made"), "reviewed_today": cards.reviewed_today(conn, r["id"])}
+                        for r in per] or "No cards yet.",
+            "hardest_cards": [dict(r) for r in hard]}
+
+
+@tool("get_quiz_history", "read", "quiz history",
+      "A course's finished practice quizzes (newest first, with percent), its quiz target, question-bank size, and "
+      "the questions missed most often.", {"code": CODE}, ["code"])
+def get_quiz_history(ctx, code):
+    conn = ctx.conn
+    c = _course(conn, code)
+    missed = conn.execute("""SELECT q.id, q.prompt, SUM(a.correct = 0) AS missed, COUNT(*) AS answered
+                             FROM quiz_answers a JOIN questions q ON q.id = a.question_id
+                             JOIN quiz_attempts t ON t.id = a.attempt_id WHERE t.course_id = ?
+                             GROUP BY q.id HAVING missed > 0 ORDER BY missed DESC LIMIT 8""", (c["id"],)).fetchall()
+    return {"quiz_target_percent": c["quiz_target"], "question_bank": len(quizzes.bank(conn, c["id"])),
+            "attempts": [{"finished": a["finished_at"][:16], "score": a["score"], "total": a["total"],
+                          "percent": round(100 * a["score"] / a["total"]) if a["total"] else None}
+                         for a in quizzes.history(conn, c["id"])[:10]],
+            "most_missed": [dict(r) for r in missed]}
+
+
+@tool("get_mistakes", "read", "mistake log",
+      "The course's mistake log (wrong quiz answers, with the student's own 'why I missed it' notes). Newest last.",
+      {"code": CODE}, ["code"])
+def get_mistakes(ctx, code):
+    c = _course(ctx.conn, code)
+    text, _ = notes_fs.read_note(c, "mistakes")
+    return {"link": f"/courses/{c['code']}/notes/mistakes",
+            "text": ("…" + text[-NOTE_CHARS:]) if len(text) > NOTE_CHARS else (text.strip() or "(empty)")}
+
+
+@tool("get_study_time", "read", "study time",
+      "Study hours per course (and per CU), hours per week for the last 12 weeks, and whether a study timer is running.")
+def get_study_time(ctx):
+    from .routers.sessions import active, analytics
+    conn = ctx.conn
+    a = analytics(conn, clock.today())
+    running = active(conn)
+    return {"hours_by_course": [{"code": r["code"], "hours": round(r["hours"], 1), "hours_per_cu": round(r["per_cu"], 1)}
+                                for r in a["courses"]],
+            "average_hours_per_cu": round(a["avg_per_cu"], 1) if a["avg_per_cu"] else None,
+            "hours_by_week": [{"week_of": w["start"].isoformat(), "hours": round(w["hours"], 1)} for w in a["weeks"]],
+            "timer_running": {"course": running["code"], "since": running["started_at"]} if running else None}
+
+
+@tool("list_certs", "read", "certs",
+      "Certifications: course, voucher status and expiry, exam date, result, expiry.")
+def list_certs(ctx):
+    return {"certs": [_pick(r, "name", "code", "voucher_status", "voucher_expires", "exam_date", "result", "expires_on")
+                      for r in assessments.list_certs(ctx.conn)] or "None yet."}
+
+
+# ---------------------------------------------------------------- write tools: proposals only
+
+PROPOSED = "Shown to the student as a card with an Apply button. Nothing is saved unless they press Apply."
+
+
+def _propose(ctx, kind, course, payload, summary):
+    with ctx.conn:
+        cur = ctx.conn.execute("INSERT INTO agent_proposals(thread_id, kind, course_id, payload_json, created_at) "
+                               "VALUES (?, ?, ?, ?, ?)", (ctx.thread["id"], kind, course["id"] if course else None,
+                                                          json.dumps(payload), clock.now().isoformat()))
+    ctx.proposals.append(cur.lastrowid)
+    return {"proposal_id": cur.lastrowid, "summary": summary, "status": PROPOSED}
+
+
+def _text(value, field, limit):
+    s = str(value or "").strip()
+    if not s:
+        raise ToolError(f"{field} is empty.")
+    return s[:limit]
+
+
+@tool("add_flashcards", "write", "proposed flashcards",
+      "Propose flashcards for a course (the student reviews, edits and applies them). One fact per card, short answers.",
+      {"code": CODE, "competency_id": COMP,
+       "cards": {"type": "array", "description": "Up to 30 cards", "items": {"type": "object", "properties": {
+           "front": {"type": "string"}, "back": {"type": "string"}}, "required": ["front", "back"]}}},
+      ["code", "cards"])
+def add_flashcards(ctx, code, cards, competency_id=None):
+    c = _course(ctx.conn, code)
+    items = [{"front": str(x.get("front", "")).strip()[:1000], "back": str(x.get("back", "")).strip()[:2000]}
+             for x in (cards if isinstance(cards, list) else []) if isinstance(x, dict)]
+    items = [x for x in items if x["front"] and x["back"]][:30]
+    if not items:
+        raise ToolError("No usable cards: each needs a front and a back.")
+    return _propose(ctx, "cards", c, {"cards": items, "competency_id": _comp_id(ctx.conn, c, competency_id)},
+                    f"{len(items)} flashcards for {c['code']}")
+
+
+@tool("add_questions", "write", "proposed questions",
+      "Propose practice questions for a course's question bank, WGU objective-assessment style. Each has 2-6 "
+      "choices and the 0-based indexes of the correct ones (more than one = select all that apply).",
+      {"code": CODE, "competency_id": COMP,
+       "questions": {"type": "array", "description": "Up to 20 questions", "items": {"type": "object", "properties": {
+           "prompt": {"type": "string"}, "choices": {"type": "array", "items": {"type": "string"}},
+           "correct": {"type": "array", "items": {"type": "integer"}}, "explanation": {"type": "string"}},
+           "required": ["prompt", "choices", "correct"]}}},
+      ["code", "questions"])
+def add_questions(ctx, code, questions, competency_id=None):
+    c = _course(ctx.conn, code)
+    out = []
+    for q in questions if isinstance(questions, list) else []:
+        if not isinstance(q, dict):
+            continue
+        choices = [str(x).strip() for x in q.get("choices") or [] if str(x).strip()][:6]
+        try:
+            correct = sorted({int(i) for i in q.get("correct") or []})
+        except (TypeError, ValueError):
+            continue
+        prompt = str(q.get("prompt", "")).strip()
+        if not prompt or len(choices) < 2 or not correct or any(not 0 <= i < len(choices) for i in correct):
+            continue
+        out.append({"kind": "multi" if len(correct) > 1 else "mc", "prompt": prompt[:2000],
+                    "explanation": str(q.get("explanation", "")).strip()[:2000],
+                    "choices_text": "\n".join(("* " if i in correct else "") + ch for i, ch in enumerate(choices))})
+    if not out:
+        raise ToolError("No usable questions: each needs a prompt, 2+ choices and valid correct indexes.")
+    return _propose(ctx, "questions", c, {"questions": out[:20], "competency_id": _comp_id(ctx.conn, c, competency_id)},
+                    f"{len(out[:20])} practice questions for {c['code']}")
+
+
+@tool("append_to_notebook", "write", "proposed notebook section",
+      "Propose a new dated section at the end of a course notebook (an explanation, summary, study plan or checklist). "
+      "Never used for PA work. Existing notes are never changed.",
+      {"code": CODE, "title": {"type": "string", "description": "Section heading"},
+       "markdown": {"type": "string", "description": "The section body in markdown"}}, ["code", "title", "markdown"])
+def append_to_notebook(ctx, code, title, markdown):
+    c = _course(ctx.conn, code)
+    title = _text(title, "title", 120).lstrip("#").strip()
+    return _propose(ctx, "notebook", c, {"title": title, "text": _text(markdown, "markdown", 20000)},
+                    f"notebook section “{title}” in {c['code']}")
+
+
+@tool("set_confidence", "write", "proposed confidence rating",
+      "Propose a confidence rating (1 = lost, 5 = could teach it) for one competency, and/or marking it reviewed today.",
+      {"code": CODE, "competency_id": {"type": "integer", "description": "From list_competencies"},
+       "confidence": {"type": "integer", "description": "1-5 (optional)"},
+       "mark_reviewed": {"type": "boolean", "description": "Mark reviewed today"}}, ["code", "competency_id"])
+def set_confidence(ctx, code, competency_id, confidence=None, mark_reviewed=False):
+    c = _course(ctx.conn, code)
+    cid = _comp_id(ctx.conn, c, competency_id)
+    if cid is None:
+        raise ToolError("competency_id is required.")
+    if confidence is not None:
+        try:
+            confidence = int(confidence)
+        except (TypeError, ValueError):
+            raise ToolError("confidence must be 1-5.")
+        if not 1 <= confidence <= 5:
+            raise ToolError("confidence must be 1-5.")
+    elif not mark_reviewed:
+        raise ToolError("Give a confidence, or mark_reviewed: true.")
+    text = ctx.conn.execute("SELECT text FROM competencies WHERE id = ?", (cid,)).fetchone()[0]
+    return _propose(ctx, "confidence", c, {"competency_id": cid, "competency": text, "confidence": confidence,
+                                           "mark_reviewed": bool(mark_reviewed)}, f"confidence for “{text[:60]}”")
+
+
+@tool("schedule_exam", "write", "proposed exam date",
+      "Propose setting a course's objective-assessment/exam date (YYYY-MM-DD) and optionally its practice-quiz target %.",
+      {"code": CODE, "date": {"type": "string", "description": "YYYY-MM-DD"},
+       "quiz_target": {"type": "integer", "description": "Percent, 1-100 (optional)"}}, ["code", "date"])
+def schedule_exam(ctx, code, date, quiz_target=None):
+    c = _course(ctx.conn, code)
+    d = clock.parse_date(str(date))
+    if not d:
+        raise ToolError("date must be YYYY-MM-DD.")
+    if quiz_target is not None and not (isinstance(quiz_target, (int, float)) and 1 <= int(quiz_target) <= 100):
+        raise ToolError("quiz_target must be 1-100.")
+    return _propose(ctx, "exam", c, {"date": d.isoformat(), "quiz_target": int(quiz_target) if quiz_target else None},
+                    f"{c['code']} exam on {d.isoformat()}")
+
+
+@tool("start_quiz", "write", "proposed quiz",
+      "Offer the student a practice quiz from a course's question bank (they press Start to take it in the app).",
+      {"code": CODE, "count": {"type": "integer", "description": "Number of questions, 1-50 (default 10)"},
+       "competency_id": COMP}, ["code"])
+def start_quiz(ctx, code, count=10, competency_id=None):
+    c = _course(ctx.conn, code)
+    cid = _comp_id(ctx.conn, c, competency_id)
+    available = len(quizzes.bank(ctx.conn, c["id"], cid))
+    if not available:
+        raise ToolError("No questions in that bank yet. Propose some with add_questions first.")
+    try:
+        count = max(1, min(50, int(count or 10), available))
+    except (TypeError, ValueError):
+        count = min(10, available)
+    return _propose(ctx, "quiz", c, {"count": count, "competency_id": cid}, f"{count}-question {c['code']} quiz")
+
+
+@tool("log_study_time", "write", "proposed study log",
+      "Propose logging study time the student did away from the timer.",
+      {"date": {"type": "string", "description": "YYYY-MM-DD"}, "minutes": {"type": "integer", "description": "1-960"},
+       "code": CODE}, ["date", "minutes"])
+def log_study_time(ctx, date, minutes, code=None):
+    c = _course(ctx.conn, code) if code else None
+    d = clock.parse_date(str(date))
+    if not d or d > clock.today():
+        raise ToolError("date must be YYYY-MM-DD and not in the future.")
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        raise ToolError("minutes must be a number.")
+    if not 0 < m <= 960:
+        raise ToolError("minutes must be 1-960.")
+    return _propose(ctx, "study", c, {"date": d.isoformat(), "minutes": m},
+                    f"{m} min of study{' on ' + c['code'] if c else ''} on {d.isoformat()}")
+
+
+# ---------------------------------------------------------------- the loop
+
+def schemas() -> list[dict]:
+    return [t["schema"] for t in TOOLS.values()]
+
+
+def run_tool(ctx, call: ai.Call) -> str:
+    t = TOOLS.get(call.name)
+    if not t:
+        result = {"error": f"There is no action “{call.name}”."}
+    else:
+        props = t["schema"]["parameters"]["properties"]
+        args = {k: v for k, v in (call.args if isinstance(call.args, dict) else {}).items() if k in props and v is not None}
+        missing = [k for k in t["schema"]["parameters"]["required"] if k not in args]
+        try:
+            if missing:
+                raise ToolError(f"Missing {', '.join(missing)}.")
+            result = t["fn"](ctx, **args)
+        except (ToolError, ValueError) as e:
+            result = {"error": str(e)}
+        except Exception:  # a bug in a tool must not take the chat down
+            log.exception("agent tool %s failed", call.name)
+            result = {"error": "That action failed inside studyvault."}
+    text = json.dumps(result, default=str, ensure_ascii=False)
+    limit = NOTE_CHARS + 500 if call.name in ("read_note", "get_mistakes") else RESULT_CHARS
+    return text if len(text) <= limit else text[:limit] + "…(truncated)"
+
+
+def _use_label(call: ai.Call) -> str:
+    t = TOOLS.get(call.name)
+    label = t["label"] if t else call.name
+    args = call.args if isinstance(call.args, dict) else {}
+    if call.name == "search_notes" and args.get("query"):
+        label += f" “{str(args['query'])[:40]}”"
+    if call.name == "read_note" and args.get("name"):
+        label = str(args["name"])
+    return f"{str(args['code']).upper()} {label}" if args.get("code") else label
+
+
+SYSTEM = """You are the study agent inside studyvault, a private study notebook for one WGU student in the B.S. Cloud & Network Engineering (AWS) program. Talk to the student as "you". Today is {today} ({weekday}).{scope}
+
+How to work:
+- Facts about the student's own courses, notes, flashcards, quizzes, progress, dates and schedule come only from your tools. Look them up; never guess them. If a lookup is empty, say so.
+- Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
+- For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
+- Changes (flashcards, questions, notebook sections, confidence ratings, exam dates, quizzes, study time) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added.
+- Performance assessments (PAs) must be the student's own work. Never draft, outline, rewrite or grade PA submissions or task answers, even if asked; you cannot see PA drafts. You may explain the underlying concepts.
+- To quiz the student in the chat: ask one question at a time, wait for the answer, then give brief feedback and the next question.
+- Be concise and practical. Markdown is rendered. Refer to courses by code; writing [[D413]] links to that course. Use dates like "Mon Oct 5"."""
+
+
+def system_prompt(conn, thread) -> str:
+    scope = ""
+    if thread["course_id"]:
+        c = conn.execute("SELECT code, title FROM courses WHERE id = ?", (thread["course_id"],)).fetchone()
+        if c:
+            scope = (f"\nThis chat was opened from course {c['code']} ({c['title']}): assume questions are about it "
+                     "unless the student says otherwise.")
+    today = clock.today()
+    return SYSTEM.format(today=today.isoformat(), weekday=today.strftime("%A"), scope=scope)
+
+
+def _history(conn, thread_id) -> list[dict]:
+    rows = conn.execute("SELECT id, role, text FROM agent_messages WHERE thread_id = ? ORDER BY id DESC LIMIT ?",
+                        (thread_id, HISTORY_MESSAGES)).fetchall()[::-1]
+    msgs = []
+    for r in rows:
+        text = r["text"]
+        if r["role"] == "assistant":
+            props = conn.execute("SELECT id, kind, status FROM agent_proposals WHERE message_id = ?", (r["id"],)).fetchall()
+            text += "".join(f"\n[proposal {p['id']} ({p['kind']}): {p['status']}]" for p in props)
+            if not text.strip():
+                continue  # a turn that failed
+        if msgs and msgs[-1]["role"] == r["role"]:
+            msgs[-1]["text"] += "\n\n" + text
+        else:
+            msgs.append({"role": r["role"], "text": text})
+    while msgs and msgs[0]["role"] != "user":
+        msgs.pop(0)
+    return msgs
+
+
+def _add_message(conn, thread_id, role, text, meta=None) -> int:
+    now = clock.now().isoformat()
+    with conn:
+        cur = conn.execute("INSERT INTO agent_messages(thread_id, role, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (thread_id, role, text, json.dumps(meta or {}), now))
+        conn.execute("UPDATE agent_threads SET updated_at = ? WHERE id = ?", (now, thread_id))
+    return cur.lastrowid
+
+
+def create_thread(conn, first_message: str, course_id=None) -> int:
+    title = re.sub(r"\s+", " ", first_message).strip()
+    title = title if len(title) <= 60 else title[:59].rstrip() + "…"
+    now = clock.now().isoformat()
+    with conn:
+        cur = conn.execute("INSERT INTO agent_threads(title, course_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                           (title or "New chat", course_id, now, now))
+    return cur.lastrowid
+
+
+def reply(conn, thread_id: int, text: str) -> int:
+    """Store the user's message, run the model with tools until it answers, store and return the assistant message id.
+    AI failures are stored on the assistant message (meta.error) rather than raised."""
+    text = (text or "").strip()[:MAX_MESSAGE_CHARS]
+    if not text:
+        raise ValueError("Type a message first.")
+    thread = conn.execute("SELECT * FROM agent_threads WHERE id = ?", (thread_id,)).fetchone()
+    _add_message(conn, thread_id, "user", text)
+    ctx = Ctx(conn, thread)
+    msgs = _history(conn, thread_id)
+    used, out, error = [], "", None
+    try:
+        for _ in range(MAX_ROUNDS):
+            turn = ai.chat(system_prompt(conn, thread), msgs, schemas())
+            if not turn.calls:
+                out = turn.text
+                break
+            msgs.append({"role": "assistant", "turn": turn})
+            results = []
+            for i, call in enumerate(turn.calls):
+                if i < MAX_CALLS_PER_ROUND:
+                    results.append((call, run_tool(ctx, call)))
+                    used.append(_use_label(call))
+                else:  # every call still needs an answer
+                    results.append((call, json.dumps({"error": "Too many actions at once; this one was skipped."})))
+            msgs.append({"role": "tool", "results": results})
+        else:
+            out = (turn.text + "\n\n" if turn.text else "") + (
+                f"*I hit the limit of {MAX_ROUNDS} lookups for one message. Say “continue” and I'll carry on.*")
+        if turn.truncated:
+            out += "\n\n*(cut off at the output limit)*"
+    except ai.AIError as e:
+        error = str(e)
+    meta = {"tools": list(dict.fromkeys(used))}
+    if error:
+        meta["error"] = error
+    mid = _add_message(conn, thread_id, "assistant", out, meta)
+    if ctx.proposals:
+        with conn:
+            conn.execute(f"UPDATE agent_proposals SET message_id = ? WHERE id IN ({','.join('?' * len(ctx.proposals))})",
+                         (mid, *ctx.proposals))
+    return mid
+
+
+# ---------------------------------------------------------------- Apply
+
+def _course_by_id(conn, course_id):
+    row = conn.execute("SELECT code FROM courses WHERE id = ?", (course_id,)).fetchone() if course_id else None
+    return catalog.get_course(conn, row[0]) if row else None
+
+
+def _still_comp(conn, course, cid):
+    if cid and not conn.execute("SELECT 1 FROM competencies WHERE id = ? AND course_id = ?", (cid, course["id"])).fetchone():
+        return None
+    return cid
+
+
+def apply(conn, p, form) -> tuple[str, str | None]:
+    """Carry out a pending proposal with the user's edits from `form`. Returns (what happened, link to it)."""
+    if p["status"] != "pending":
+        raise ApplyError("This was already handled.")
+    payload = json.loads(p["payload_json"])
+    c = _course_by_id(conn, p["course_id"])
+    if p["course_id"] and not c:
+        raise ApplyError("That course no longer exists.")
+    kind, today = p["kind"], clock.today().isoformat()
+    base = f"/courses/{c['code']}" if c else ""
+
+    if kind == "cards":
+        cid, added = _still_comp(conn, c, payload.get("competency_id")), 0
+        for i in form.getlist("keep"):
+            front, back = str(form.get(f"front_{i}", "")).strip(), str(form.get(f"back_{i}", "")).strip()
+            if front and back:
+                cards.add(conn, c["id"], front, back, competency_id=cid, source="ai-accepted")
+                added += 1
+        if not added:
+            raise ApplyError("Keep at least one card, or press Dismiss.")
+        result, link = f"Added {added} card{'s' * (added != 1)} to {c['code']}.", f"{base}/cards"
+    elif kind == "questions":
+        cid, saved = _still_comp(conn, c, payload.get("competency_id")), 0
+        for i in form.getlist("keep"):
+            try:
+                quizzes.save(conn, c["id"], {"kind": form.get(f"kind_{i}", "mc"), "prompt": form.get(f"prompt_{i}", ""),
+                                             "choices": form.get(f"choices_{i}", ""),
+                                             "explanation": form.get(f"explanation_{i}", ""),
+                                             "competency_id": str(cid or "")}, source="ai-accepted")
+                saved += 1
+            except quizzes.QuestionError:
+                continue  # an edit broke it; keep the rest
+        if not saved:
+            raise ApplyError("No question could be saved: each needs a prompt and a choice marked with *.")
+        result, link = f"Added {saved} question{'s' * (saved != 1)} to the {c['code']} bank.", f"{base}/quizzes"
+    elif kind == "notebook":
+        title = str(form.get("title") or payload["title"]).strip()
+        text = str(form.get("text") or "").strip()
+        if not text:
+            raise ApplyError("The section is empty.")
+        notes_fs.append_note(conn, c, "notebook", f"## {title} · {today}\n\n{text}\n")
+        result, link = f"Added “{title}” to the {c['code']} notebook.", f"{base}/notes/notebook"
+    elif kind == "confidence":
+        cid = _still_comp(conn, c, payload["competency_id"])
+        if not cid:
+            raise ApplyError("That competency no longer exists.")
+        value = str(form.get("confidence", "")).strip()
+        if value:
+            comp.set_confidence(conn, cid, int(value))
+            result = f"Confidence set to {value}/5."
+        elif form.get("mark_reviewed"):
+            comp.mark_reviewed(conn, cid)
+            result = "Marked reviewed today."
+        else:
+            raise ApplyError("Pick a confidence or tick Mark reviewed.")
+        link = f"{base}/competencies"
+    elif kind == "exam":
+        try:
+            assessments.schedule_exam(conn, c, str(form.get("date", "")), str(form.get("quiz_target", "")))
+        except assessments.AssessmentError as e:
+            raise ApplyError(str(e))
+        result, link = f"{c['code']} exam set for {form.get('date')}.", f"{base}/assessment"
+    elif kind == "quiz":
+        try:
+            count = max(1, min(50, int(form.get("count") or payload["count"])))
+            attempt = quizzes.start(conn, c["id"], count, _still_comp(conn, c, payload.get("competency_id")))
+        except (ValueError, quizzes.QuestionError) as e:
+            raise ApplyError(str(e))
+        result, link = f"Started a {count}-question quiz.", f"/quizzes/{attempt}"
+    elif kind == "study":
+        from .routers.sessions import add_manual
+        try:
+            add_manual(conn, c, str(form.get("date", "")), str(form.get("minutes", "")))
+        except ValueError as e:
+            raise ApplyError(str(e))
+        result, link = f"Logged {form.get('minutes')} min.", "/sessions"
+    else:
+        raise ApplyError("Unknown proposal.")
+    with conn:
+        conn.execute("UPDATE agent_proposals SET status = 'applied', result = ?, link = ? WHERE id = ?", (result, link or '', p["id"]))
+    return result, link
+
+
+def dismiss(conn, p) -> None:
+    if p["status"] == "pending":
+        with conn:
+            conn.execute("UPDATE agent_proposals SET status = 'dismissed' WHERE id = ?", (p["id"],))

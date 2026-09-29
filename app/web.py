@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from . import clock
+from . import appearance, clock
 from .config import settings
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -32,7 +32,8 @@ context_providers = []
 
 
 def render(request: Request, template: str, status_code: int = 200, **ctx):
-    base = {"today": clock.today(), "ai_enabled": settings.ai_enabled, "authed": bool(request.session.get("auth"))}
+    base = {"today": clock.today(), "ai_enabled": settings.ai_enabled, "authed": bool(request.session.get("auth")),
+            **appearance.get()}
     if base["authed"]:
         for provider in context_providers:
             base.update(provider(request))

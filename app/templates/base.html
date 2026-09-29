@@ -1,10 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ theme }}" data-mode="{{ mode }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}studyvault{% endblock %}</title>
+  <link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/themes.css">
   {% block head %}{% endblock %}
   <script src="/static/vendor/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
@@ -21,10 +23,12 @@
       <a href="/sessions">Study</a>
       <a href="/certs">Certs</a>
       <a href="/search">Search</a>
+      {% if ai_enabled %}<a href="/ask">Ask</a>{% endif %}
+      <a href="/settings">Settings</a>
       {% if nav_extra is defined %}{{ nav_extra|safe }}{% endif %}
       {% endblock %}
     </nav>
-    {% if active_session %}<a class="timer-pill" href="/sessions" title="Study timer running">⏱ {{ active_session.code or "study" }} <span class="js-elapsed" data-elapsed="{{ active_session.elapsed }}"></span></a>{% endif %}
+    {% if active_session %}<a class="timer-pill" href="/sessions" title="Study timer running">{% include "_clock.html" %} {{ active_session.code or "study" }} <span class="js-elapsed" data-elapsed="{{ active_session.elapsed }}"></span></a>{% endif %}
     <form method="get" action="/search" class="no-print" role="search" style="margin:0"><input type="search" name="q" placeholder="Search…" aria-label="Search" style="min-height:36px;padding:.3rem .6rem;width:11rem"></form>
     <form method="post" action="/logout" class="logout"><button class="link" type="submit">Log out</button></form>
   </header>
