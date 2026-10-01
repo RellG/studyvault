@@ -4,6 +4,7 @@ Provider and model come from AI_PROVIDER / AI_MODEL; neither is hardcoded. Raw h
 because the plan asks for one small interface over two providers with the same timeout/retry behaviour.
 Every failure becomes AIError with a message fit to show in the UI; nothing here raises anything else.
 """
+import contextvars
 import logging
 import time
 from dataclasses import dataclass, field
@@ -15,6 +16,9 @@ from .config import settings
 log = logging.getLogger("studyvault.ai")
 
 TIMEOUT_S = 30.0
+BULK_TIMEOUT_S = 120.0  # long outputs (dozens of cards, an agent turn writing them) take well over 30 s
+BULK_MAX_TOKENS = 16384  # floor for those calls; on Gemini 3 the model's thinking counts against this too
+_timeout = contextvars.ContextVar("ai_timeout", default=TIMEOUT_S)  # per call, set by complete()/chat()
 RETRY_STATUSES = {408, 429, 500, 502, 503, 504, 529}
 MAX_WAIT_S = 30.0  # longest provider-requested wait we sit out before retrying
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -55,10 +59,11 @@ def _post(url: str, headers: dict, body: dict) -> dict:
     while attempt < tries:
         wait = 1.5
         try:
-            with httpx.Client(timeout=TIMEOUT_S, transport=_transport) as client:
+            with httpx.Client(timeout=_timeout.get(), transport=_transport) as client:
                 r = client.post(url, headers=headers, json=body)
         except httpx.TimeoutException:
-            last = AIError("The AI service didn't answer within 30 seconds. Try again, or with less text.")
+            last = AIError(f"The AI service didn't answer within {_timeout.get():.0f} seconds. "
+                           "Try again, or with less text.")
         except httpx.HTTPError:
             last = AIError("Couldn't reach the AI service. Is the Pi online?")
         else:
@@ -153,14 +158,19 @@ def _check_provider(table: dict):
     return fn
 
 
-def complete(prompt: str, max_tokens: int | None = None, system: str | None = None) -> str:
+def complete(prompt: str, max_tokens: int | None = None, system: str | None = None,
+             timeout: float = TIMEOUT_S) -> str:
     fn = _check_provider(PROVIDERS)
     max_tokens = max_tokens or settings.ai_max_output_tokens
     started = time.monotonic()
     # Sizes only, never contents (PLAN Slice 9).
     log.debug("ai request provider=%s prompt_chars=%d system_chars=%d max_tokens=%d",
               settings.ai_provider, len(prompt), len(system or ""), max_tokens)
-    text = fn(prompt, system, max_tokens)
+    token = _timeout.set(timeout)
+    try:
+        text = fn(prompt, system, max_tokens)
+    finally:
+        _timeout.reset(token)
     log.debug("ai response chars=%d in %.1fs", len(text), time.monotonic() - started)
     return text
 
@@ -258,13 +268,18 @@ def _google_chat(system: str, messages: list[dict], tools: list[dict], max_token
 CHAT_PROVIDERS = {"anthropic": _anthropic_chat, "google": _google_chat}
 
 
-def chat(system: str, messages: list[dict], tools: list[dict], max_tokens: int | None = None) -> Turn:
+def chat(system: str, messages: list[dict], tools: list[dict], max_tokens: int | None = None,
+         timeout: float = TIMEOUT_S) -> Turn:
     """One model turn with tools available. `tools` items: {"name", "description", "parameters" (JSON schema)}."""
     fn = _check_provider(CHAT_PROVIDERS)
     max_tokens = max_tokens or settings.ai_max_output_tokens
     started = time.monotonic()
     log.debug("ai chat provider=%s messages=%d system_chars=%d tools=%d", settings.ai_provider, len(messages),
               len(system), len(tools))
-    turn = fn(system, messages, tools, max_tokens)
+    token = _timeout.set(timeout)
+    try:
+        turn = fn(system, messages, tools, max_tokens)
+    finally:
+        _timeout.reset(token)
     log.debug("ai chat reply chars=%d calls=%d in %.1fs", len(turn.text), len(turn.calls), time.monotonic() - started)
     return turn

@@ -19,11 +19,11 @@ def _require_ai():
         raise HTTPException(404)
 
 
-def _page(request, conn, c, text="", section="", error=None, status_code=200):
+def _page(request, conn, c, text="", section="", error=None, status_code=200, count=0, fill=True):
     return render(request, "ai/index.html", **course_context(conn, c), tab="ai", sections=cards.notes_sections(c),
                   comps=comp.list_for(conn, c["id"]), text=text, section=section, error=error, actions=ACTIONS,
                   provider=ai.describe(), integrity=assessments.INTEGRITY, max_chars=ai_actions.MAX_INPUT_CHARS,
-                  status_code=status_code)
+                  counts=ai_actions.COUNTS, count=count, fill=fill, status_code=status_code)
 
 
 @router.get("/courses/{code}/ai")
@@ -54,19 +54,25 @@ async def ai_run(request: Request, code: str, conn=Depends(get_db)):
                            (form["competency_id"], c["id"])).fetchone()
         competency = row["text"] if row else ""
     try:
+        count = int(form.get("count") or 0)
+    except ValueError:
+        count = 0
+    fill, course, note = bool(form.get("fill")), f"{c['code']} {c['title']}", None
+    try:
         if action == "cards":
-            result = ai_actions.flashcards(text)
+            result, note = ai_actions.flashcards(text, count, fill, course)
         elif action == "questions":
-            result = ai_actions.questions(text)
+            result, note = ai_actions.questions(text, count, fill, course)
         elif action == "explain":
             result = ai_actions.explain(text)
         else:
             result = ai_actions.gap_check(competency, text)
     except ai.AIError as e:
-        return _page(request, conn, c, text=text, section=form.get("section", ""), error=str(e), status_code=502)
+        return _page(request, conn, c, text=text, section=form.get("section", ""), error=str(e), status_code=502,
+                     count=count, fill=fill)
     rendered = markdown.render(result, known_codes(conn)) if isinstance(result, str) else None
     return render(request, "ai/draft.html", **course_context(conn, c), tab="ai", action=action, label=ACTIONS[action],
-                  result=result, rendered=rendered, comps=comp.list_for(conn, c["id"]),
+                  result=result, rendered=rendered, note=note, comps=comp.list_for(conn, c["id"]),
                   competency_id=form.get("competency_id", ""), competency=competency)
 
 

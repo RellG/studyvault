@@ -15,7 +15,8 @@ router = APIRouter()
 
 QUICK = ["What should I study today?", "Plan my week.", "Quiz me on my weakest competency.",
          "What do my mistakes have in common?", "Am I ready for the exam?"]
-FILL = ["Explain this differently: ", "Gap-check this competency against my notes: "]
+FILL = ["Explain this differently: ", "Gap-check this competency against my notes: ",
+        "From my pre-assessment, I need to learn these (make flashcards for every one, and remember my weak areas):\n"]
 KIND_LABELS = {"cards": "Flashcards", "questions": "Practice questions", "notebook": "Notebook section",
                "confidence": "Competency confidence", "exam": "Exam date", "quiz": "Practice quiz", "study": "Study time"}
 
@@ -52,8 +53,34 @@ def ask_home(request: Request, course: str = "", conn=Depends(get_db)):
     threads = conn.execute("SELECT t.*, c.code, (SELECT COUNT(*) FROM agent_messages m WHERE m.thread_id = t.id) AS n "
                            "FROM agent_threads t LEFT JOIN courses c ON c.id = t.course_id "
                            "ORDER BY t.updated_at DESC LIMIT 40").fetchall()
+    n_memory = conn.execute("SELECT COUNT(*) FROM agent_memory").fetchone()[0]
     return render(request, "agent/index.html", threads=threads, courses=_courses(conn), scope=c, quick=QUICK, fill=FILL,
-                  provider=ai.describe(), error=request.query_params.get("error"))
+                  provider=ai.describe(), error=request.query_params.get("error"), n_memory=n_memory)
+
+
+@router.get("/ask/memory")
+def memory_page(request: Request, conn=Depends(get_db)):
+    _require_ai()
+    return render(request, "agent/memory.html", memories=agent.memories(conn), courses=_courses(conn),
+                  limit=agent.MEMORY_TEXT, error=request.query_params.get("error"))
+
+
+@router.post("/ask/memory")
+def memory_add(text: str = Form(""), course: str = Form(""), conn=Depends(get_db)):
+    _require_ai()
+    c = catalog.get_course(conn, course) if course else None
+    try:
+        agent.add_memory(conn, text, c["id"] if c else None)
+    except ValueError as e:
+        return RedirectResponse(f"/ask/memory?{urlencode({'error': str(e)})}", status_code=303)
+    return RedirectResponse("/ask/memory", status_code=303)
+
+
+@router.post("/ask/memory/{mid}/delete")
+def memory_delete(mid: int, conn=Depends(get_db)):
+    _require_ai()
+    agent.delete_memory(conn, mid)
+    return RedirectResponse("/ask/memory", status_code=303)
 
 
 @router.post("/ask/new")

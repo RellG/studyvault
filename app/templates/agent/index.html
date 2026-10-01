@@ -5,7 +5,7 @@
 {% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
 <form class="card" method="post" action="/ask/new" data-wait>
   <label for="ask-text">Ask about your courses, notes, cards, quizzes or schedule</label>
-  <textarea id="ask-text" name="text" rows="3" maxlength="4000" class="ask-box" placeholder="e.g. What should I study tonight?"></textarea>
+  <textarea id="ask-text" name="text" rows="3" maxlength="12000" class="ask-box" placeholder="e.g. What should I study tonight?"></textarea>
   <div class="row" style="margin-top: .6rem">
     <label for="ask-course" class="inline">Focus</label>
     <select id="ask-course" name="course" class="ask-scope">
@@ -15,9 +15,11 @@
     <button class="primary" type="submit">Ask</button>
   </div>
   {% include "agent/_quick.html" %}
-  <p class="small muted ask-wait" hidden>Thinking… looking things up can take up to a minute.</p>
+  <p class="small muted ask-wait" hidden>Thinking… looking things up can take a minute; a long list of cards, a couple.</p>
 </form>
 <p class="small muted">Model: {{ provider }}. It reads your vault to answer. Anything it wants to add or change comes back as a card you Apply or Dismiss. It never sees PA drafts.</p>
+
+<p class="small"><a href="/ask/memory">Memory</a> <span class="muted">· {{ n_memory }} thing{{ "s" if n_memory != 1 }} the agent remembers about you across chats</span></p>
 
 <h2>Recent chats</h2>
 {% if threads %}

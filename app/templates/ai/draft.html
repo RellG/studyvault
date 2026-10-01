@@ -4,7 +4,8 @@
 {% include "courses/_header.html" %}
 {% include "courses/_tabs.html" %}
 <div class="banner amber" role="note">Draft from the model: check every item against your notes. Nothing is saved until you press Accept, and only the rows you keep.</div>
-<h2>{{ label }}</h2>
+<h2>{{ label }}{% if action in ('cards', 'questions') %} <span class="muted small">({{ result|length }})</span>{% endif %}</h2>
+{% if note %}<div class="banner info" role="note">{{ note }}</div>{% endif %}
 
 <form method="post" action="/courses/{{ course.code }}/ai/accept">
   <input type="hidden" name="competency_id" value="{{ competency_id }}">
@@ -13,6 +14,7 @@
   {% for c in result %}
   <div class="card" style="margin: .6rem 0">
     <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+    {% if c.general %}<span class="badge amber" title="Not in your notes: the answer comes from the model's own knowledge">Check</span>{% endif %}
     <div class="form-grid">
       <div><label>Front</label><textarea name="front_{{ loop.index0 }}" rows="2">{{ c.front }}</textarea></div>
       <div><label>Back</label><textarea name="back_{{ loop.index0 }}" rows="2">{{ c.back }}</textarea></div>
@@ -24,6 +26,7 @@
   {% for q in result %}
   <div class="card" style="margin: .6rem 0">
     <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
+    {% if q.general %}<span class="badge amber" title="Not in your notes: the answer comes from the model's own knowledge">Check</span>{% endif %}
     <input type="hidden" name="kind_{{ loop.index0 }}" value="{{ q.kind }}">
     <label>Question ({{ 'select all that apply' if q.kind == 'multi' else 'one answer' }})</label>
     <textarea name="prompt_{{ loop.index0 }}" rows="2">{{ q.prompt }}</textarea>

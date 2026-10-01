@@ -26,10 +26,20 @@
   <select id="ai-comp" name="competency_id"><option value="">None</option>
     {% for r in comps %}<option value="{{ r.id }}">{{ r.text|truncate(80, True, '…') }}</option>{% endfor %}</select>
   {% endif %}
+  <div class="row" style="margin-top: .6rem">
+    <label for="ai-count" class="inline">How many <span class="muted small">(cards and questions)</span></label>
+    <select id="ai-count" name="count" class="ask-scope">
+      <option value="0">As many as the notes need</option>
+      {% for n in counts %}<option value="{{ n }}" {{ 'selected' if count == n }}>Up to {{ n }}</option>{% endfor %}
+    </select>
+  </div>
+  <label class="inline"><input type="checkbox" name="fill" value="1" {{ 'checked' if fill }}>
+    My notes are a list of topics: make one for every topic, and fill in answers my notes don't have</label>
+  <p class="small muted" style="margin-top: 0">Answers that come from the model's own knowledge rather than your notes are marked <span class="badge amber">Check</span> in the draft.</p>
   <div class="actions">
     {% for key, label in actions.items() %}<button type="submit" name="action" value="{{ key }}" {{ 'class=primary' if loop.first }}>{{ label }}</button>{% endfor %}
   </div>
-  <p class="small muted" id="ai-wait" hidden>Asking the model… this can take up to 30 seconds.</p>
+  <p class="small muted" id="ai-wait" hidden>Asking the model… a long list of cards can take a minute or two.</p>
   <p class="small muted">Model: {{ provider }}. Results come back as drafts: you keep, edit or discard each one.</p>
 </form>
 {% endblock %}

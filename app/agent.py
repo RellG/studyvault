@@ -10,6 +10,7 @@ import logging
 import re
 
 from . import ai, assessments, cards, catalog, clock, competencies as comp, notes_fs, progress, quizzes, readiness
+from .config import settings
 
 log = logging.getLogger("studyvault.agent")
 
@@ -18,7 +19,10 @@ MAX_CALLS_PER_ROUND = 8
 RESULT_CHARS = 4000       # per tool result sent back to the model
 NOTE_CHARS = 8000         # read_note / get_mistakes get more room
 HISTORY_MESSAGES = 20     # earlier messages resent each turn (final text only, not their lookups)
-MAX_MESSAGE_CHARS = 4000
+MAX_MESSAGE_CHARS = 12000  # room for a pasted list of pre-assessment topics
+MAX_CARDS = 40            # per add_flashcards call; a longer list takes several calls
+MEMORY_TEXT = 300         # one memory
+MEMORY_CHARS = 4000       # all memories sent with each request; the newest win if there are more
 READABLE_NOTES = ["overview", "competencies", "notebook", "mistakes"]
 
 
@@ -280,16 +284,17 @@ def _text(value, field, limit):
 
 
 @tool("add_flashcards", "write", "proposed flashcards",
-      "Propose flashcards for a course (the student reviews, edits and applies them). One fact per card, short answers.",
+      "Propose flashcards for a course (the student reviews, edits and applies them). One fact per card, short answers. "
+      f"Up to {MAX_CARDS} cards per call; for more, call it again in the same step.",
       {"code": CODE, "competency_id": COMP,
-       "cards": {"type": "array", "description": "Up to 30 cards", "items": {"type": "object", "properties": {
+       "cards": {"type": "array", "description": f"Up to {MAX_CARDS} cards", "items": {"type": "object", "properties": {
            "front": {"type": "string"}, "back": {"type": "string"}}, "required": ["front", "back"]}}},
       ["code", "cards"])
 def add_flashcards(ctx, code, cards, competency_id=None):
     c = _course(ctx.conn, code)
     items = [{"front": str(x.get("front", "")).strip()[:1000], "back": str(x.get("back", "")).strip()[:2000]}
              for x in (cards if isinstance(cards, list) else []) if isinstance(x, dict)]
-    items = [x for x in items if x["front"] and x["back"]][:30]
+    items = [x for x in items if x["front"] and x["back"]][:MAX_CARDS]
     if not items:
         raise ToolError("No usable cards: each needs a front and a back.")
     return _propose(ctx, "cards", c, {"cards": items, "competency_id": _comp_id(ctx.conn, c, competency_id)},
@@ -415,6 +420,71 @@ def log_study_time(ctx, date, minutes, code=None):
                     f"{m} min of study{' on ' + c['code'] if c else ''} on {d.isoformat()}")
 
 
+# ---------------------------------------------------------------- memory: saved at once (it's the agent's own notes
+# about the student, not their data), shown in the chat and on /ask/memory, where the student can delete any of it
+
+def add_memory(conn, text, course_id=None, thread_id=None) -> int:
+    text = re.sub(r"\s+", " ", str(text or "")).strip()[:MEMORY_TEXT]
+    if not text:
+        raise ValueError("The memory is empty.")
+    with conn:
+        cur = conn.execute("INSERT INTO agent_memory(course_id, text, thread_id, created_at) VALUES (?, ?, ?, ?)",
+                           (course_id, text, thread_id, clock.now().isoformat()))
+    return cur.lastrowid
+
+
+def memories(conn) -> list:
+    return conn.execute("SELECT m.*, c.code FROM agent_memory m LEFT JOIN courses c ON c.id = m.course_id "
+                        "ORDER BY m.id DESC").fetchall()
+
+
+def delete_memory(conn, mid) -> bool:
+    with conn:
+        return conn.execute("DELETE FROM agent_memory WHERE id = ?", (mid,)).rowcount > 0
+
+
+@tool("remember", "memory", "saved to memory",
+      "Save one short, lasting fact about the student to your memory, which you see at the start of every chat: weak "
+      "topics from a pre-assessment, goals, deadlines they mention, how they like to study, what they've mastered. "
+      "One fact per call, one sentence. Not for things already stored in the vault (cards, dates, notes).",
+      {"text": {"type": "string", "description": "The fact, one sentence"},
+       "code": {"type": "string", "description": "Course code if it's about one course (optional)"}}, ["text"])
+def remember(ctx, text, code=None):
+    c = _course(ctx.conn, code) if code else None
+    try:
+        mid = add_memory(ctx.conn, text, c["id"] if c else None, ctx.thread["id"])
+    except ValueError as e:
+        raise ToolError(str(e))
+    return {"memory_id": mid, "saved": True}
+
+
+@tool("forget", "memory", "removed from memory",
+      "Delete one memory that is wrong or no longer true (e.g. a weak topic the student has now mastered).",
+      {"memory_id": {"type": "integer", "description": "The id shown in your memory list"}}, ["memory_id"])
+def forget(ctx, memory_id):
+    try:
+        mid = int(memory_id)
+    except (TypeError, ValueError):
+        raise ToolError("memory_id must be a number.")
+    if not delete_memory(ctx.conn, mid):
+        raise ToolError(f"No memory {mid}.")
+    return {"deleted": mid}
+
+
+def _memory_block(conn) -> str:
+    lines, used = [], 0
+    for m in memories(conn):
+        line = f"- [{m['id']}]{' ' + m['code'] if m['code'] else ''} ({m['created_at'][:10]}) {m['text']}"
+        if used + len(line) > MEMORY_CHARS:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return "\n\nYour memory is empty so far."
+    return ("\n\nWhat you remember about the student (newest first; [id] is for forget). Use it, but trust the vault "
+            "if they disagree:\n" + "\n".join(lines))
+
+
 # ---------------------------------------------------------------- the loop
 
 def schemas() -> list[dict]:
@@ -451,6 +521,9 @@ def _use_label(call: ai.Call) -> str:
         label += f" “{str(args['query'])[:40]}”"
     if call.name == "read_note" and args.get("name"):
         label = str(args["name"])
+    said = re.sub(r"\s+", " ", str(args.get("text") or "")).strip()
+    if call.name == "remember" and said:
+        label += f" “{said[:80]}”"
     return f"{str(args['code']).upper()} {label}" if args.get("code") else label
 
 
@@ -461,6 +534,8 @@ How to work:
 - Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
 - For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
 - Changes (flashcards, questions, notebook sections, confidence ratings, exam dates, quizzes, study time) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added.
+- When the student gives you a list (topics to learn, terms from a pre-assessment, missed questions), cover EVERY item: at least one flashcard per term, more where a term has two things worth knowing. Fill in answers from your own knowledge where their notes have none. A long list takes several add_flashcards calls in the same step, so make them all at once. Then say how many cards you proposed and name any item you left out and why.
+- You have a memory that carries across chats (below). Use `remember` for lasting facts worth knowing next time: weak topics and scores from a pre-assessment, goals, exam plans, how they like to study. Save a pre-assessment's weak topics as a few short memories, not one per term. Use `forget` when a memory turns out wrong or stale. Mention briefly what you saved.
 - Performance assessments (PAs) must be the student's own work. Never draft, outline, rewrite or grade PA submissions or task answers, even if asked; you cannot see PA drafts. You may explain the underlying concepts.
 - To quiz the student in the chat: ask one question at a time, wait for the answer, then give brief feedback and the next question.
 - Be concise and practical. Markdown is rendered. Refer to courses by code; writing [[D413]] links to that course. Use dates like "Mon Oct 5"."""
@@ -474,7 +549,7 @@ def system_prompt(conn, thread) -> str:
             scope = (f"\nThis chat was opened from course {c['code']} ({c['title']}): assume questions are about it "
                      "unless the student says otherwise.")
     today = clock.today()
-    return SYSTEM.format(today=today.isoformat(), weekday=today.strftime("%A"), scope=scope)
+    return SYSTEM.format(today=today.isoformat(), weekday=today.strftime("%A"), scope=scope) + _memory_block(conn)
 
 
 def _history(conn, thread_id) -> list[dict]:
@@ -529,7 +604,9 @@ def reply(conn, thread_id: int, text: str) -> int:
     used, out, error = [], "", None
     try:
         for _ in range(MAX_ROUNDS):
-            turn = ai.chat(system_prompt(conn, thread), msgs, schemas())
+            # a turn that writes 40+ cards needs far more than a chat answer, and takes longer
+            turn = ai.chat(system_prompt(conn, thread), msgs, schemas(),
+                           max(settings.ai_max_output_tokens, ai.BULK_MAX_TOKENS), ai.BULK_TIMEOUT_S)
             if not turn.calls:
                 out = turn.text
                 break

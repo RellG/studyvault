@@ -133,17 +133,45 @@ def test_truncated_text_is_flagged(monkeypatch, mock_api):
 def test_flashcards_and_questions_parse(monkeypatch, mock_api):
     use(monkeypatch)
     mock_api.set(lambda r: anthropic_reply('Here you go:\n```json\n[{"front": "SSH port?", "back": "22"}, {"front": ""}]\n```'))
-    assert ai_actions.flashcards("notes") == [{"front": "SSH port?", "back": "22"}]
+    assert ai_actions.flashcards("notes") == ([{"front": "SSH port?", "back": "22"}], None)
     mock_api.set(lambda r: anthropic_reply(json.dumps([
         {"kind": "mc", "prompt": "Q?", "choices": ["a", "b", "c", "d"], "correct": [1], "explanation": "b"},
         {"kind": "mc", "prompt": "bad", "choices": ["a"], "correct": [5]},
         {"kind": "mc", "prompt": "Two?", "choices": ["a", "b", "c"], "correct": [0, 2]}])))
-    qs = ai_actions.questions("notes")
+    qs, note = ai_actions.questions("notes")
+    assert note is None
     assert len(qs) == 2 and qs[0]["choices_text"] == "a\n* b\nc\nd" and qs[1]["kind"] == "multi"
     with pytest.raises(ai_actions.ActionError):
         ai_actions.flashcards("")
     with pytest.raises(ai_actions.ActionError):
         ai_actions.flashcards("x" * (ai_actions.MAX_INPUT_CHARS + 1))
+
+
+def test_flashcards_cover_a_topic_list(monkeypatch, mock_api):
+    """A pre-assessment list of bare terms: no 10-card cap, answers may come from the model and are flagged."""
+    use(monkeypatch)
+    terms = [f"term {i}" for i in range(45)]
+    mock_api.set(lambda r: anthropic_reply(json.dumps(
+        [{"front": f"What is {t}?", "back": "x", "source": "general"} for t in terms] +
+        [{"front": "RFC 1918 class A?", "back": "10.0.0.0/8", "source": "notes"}])))
+    cards, note = ai_actions.flashcards("\n".join(f"- {t}" for t in terms), 0, fill=True, course="D413 Telecomm")
+    assert len(cards) == 46 and note is None
+    assert cards[0]["general"] and not cards[-1]["general"]
+    body = json.loads(mock_api[-1].content)
+    prompt = body["messages"][0]["content"]
+    assert "EVERY topic" in prompt and "D413 Telecomm" in prompt and "at most 60" in prompt
+    assert body["max_tokens"] >= ai.BULK_MAX_TOKENS and "standard knowledge" in body["system"]
+    cards, _ = ai_actions.flashcards("notes", 20)  # an explicit count caps it
+    assert len(cards) == 20 and "general" not in cards[0]
+    assert "up to 20" in json.loads(mock_api[-1].content)["messages"][0]["content"]
+
+
+def test_a_reply_cut_off_keeps_its_complete_items(monkeypatch, mock_api):
+    use(monkeypatch)
+    mock_api.set(lambda r: anthropic_reply('```json\n[{"front": "A {brace}?", "back": "1"}, {"front": "B?", "back": "2"}, '
+                                           '{"front": "C?", "ba', stop="max_tokens"))
+    cards, note = ai_actions.flashcards("notes")
+    assert [c["front"] for c in cards] == ["A {brace}?", "B?"] and "cut off" in note
 
 
 def test_only_selected_notes_are_sent(monkeypatch, mock_api):
@@ -163,8 +191,14 @@ def test_ai_flow_drafts_then_accept(client, monkeypatch, mock_api):
     use(monkeypatch)
     assert "AI assist" in client.get("/courses/D413").text
     mock_api.set(lambda r: anthropic_reply('[{"front": "802.11ax name?", "back": "Wi-Fi 6"}, {"front": "junk", "back": "x"}]'))
+    page = client.get("/courses/D413/ai").text
+    assert 'name="count"' in page and 'name="fill"' in page
     r = client.post("/courses/D413/ai/run", data={"action": "cards", "text": "802.11ax is Wi-Fi 6"})
-    assert r.status_code == 200 and "Draft from the model" in r.text
+    assert r.status_code == 200 and "Draft from the model" in r.text and "(2)" in r.text
+    mock_api.set(lambda r: anthropic_reply('[{"front": "OSPF?", "back": "Link-state IGP", "source": "general"}]'))
+    r = client.post("/courses/D413/ai/run", data={"action": "cards", "text": "- OSPF", "fill": "1", "count": "0"})
+    assert ">Check</span>" in r.text
+    mock_api.set(lambda r: anthropic_reply('[{"front": "802.11ax name?", "back": "Wi-Fi 6"}, {"front": "junk", "back": "x"}]'))
     from app import db
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0  # nothing saved yet

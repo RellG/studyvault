@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Memory · Ask · studyvault{% endblock %}
+{% block content %}
+<a href="/ask" class="small">← All chats</a>
+<h1>Memory</h1>
+<p class="muted">What the study agent remembers about you. It reads all of this at the start of every chat, and saves new
+  things itself when they're worth keeping (weak topics from a pre-assessment, goals, how you like to study). Delete
+  anything that's wrong or out of date.</p>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+
+<form class="card" method="post" action="/ask/memory">
+  <label for="mem-text">Add a memory</label>
+  <input type="text" id="mem-text" name="text" maxlength="{{ limit }}" placeholder="e.g. Weak on subnetting; prefers short study sessions">
+  <div class="row" style="margin-top: .6rem">
+    <label for="mem-course" class="inline">About</label>
+    <select id="mem-course" name="course" class="ask-scope">
+      <option value="">Me in general</option>
+      {% for c in courses %}<option value="{{ c.code }}">{{ c.code }} · {{ c.title }}</option>{% endfor %}
+    </select>
+    <button class="primary" type="submit">Save</button>
+  </div>
+</form>
+
+{% if memories %}
+<ul class="plain thread-list">
+  {% for m in memories %}
+  <li class="row spread">
+    <span>{% if m.code %}<span class="badge accent">{{ m.code }}</span> {% endif %}{{ m.text }}
+      <span class="small muted">{{ m.created_at|date('%b %-d') }}{% if m.thread_id %} · <a href="/ask/{{ m.thread_id }}">from a chat</a>{% else %} · added by you{% endif %}</span></span>
+    <form method="post" action="/ask/memory/{{ m.id }}/delete"><button class="link" type="submit">Delete</button></form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="muted">Nothing yet. Tell the agent about your pre-assessment, or add something above.</p>{% endif %}
+{% endblock %}

@@ -196,6 +196,40 @@ def test_every_read_tool_runs_on_seeded_data(seeded, tid):
         assert "error" not in out, (name, out)
 
 
+# ---------------------------------------------------------------- memory
+
+def test_memory_carries_into_every_chat(seeded, tid, api, monkeypatch):
+    use(monkeypatch)
+    api.replies = [a_calls(("remember", {"text": "D413 pre-assessment:  weak on OSPF,\nRADIUS", "code": "D413"}),
+                           ("remember", {"text": "  "})), a_text("Noted.")]
+    _, meta = message(seeded, agent.reply(seeded, tid, "I bombed OSPF and RADIUS"))
+    assert meta["tools"] == ["D413 saved to memory “D413 pre-assessment: weak on OSPF, RADIUS”", "saved to memory"]
+    assert "empty" in api.bodies[1]["messages"][-1]["content"][1]["content"]
+    m = agent.memories(seeded)
+    assert len(m) == 1 and m[0]["text"] == "D413 pre-assessment: weak on OSPF, RADIUS" and m[0]["code"] == "D413"
+    other = agent.create_thread(seeded, "a new chat")  # a different chat still sees it
+    api.replies = [a_text("Start with OSPF.")]
+    agent.reply(seeded, other, "What should I study?")
+    assert f"[{m[0]['id']}] D413" in api.bodies[-1]["system"] and "weak on OSPF" in api.bodies[-1]["system"]
+    api.replies = [a_calls(("forget", {"memory_id": m[0]["id"]}), ("forget", {"memory_id": 999})), a_text("Done.")]
+    agent.reply(seeded, other, "I've got OSPF now")
+    assert agent.memories(seeded) == [] and "No memory 999" in api.bodies[-1]["messages"][-1]["content"][1]["content"]
+    assert "memory is empty" in agent.system_prompt(seeded, seeded.execute("SELECT * FROM agent_threads").fetchone())
+
+
+def test_long_card_lists_and_output_budget(seeded, tid, api, monkeypatch):
+    use(monkeypatch)
+    monkeypatch.setattr(settings, "ai_max_output_tokens", 4096)
+    many = [{"front": f"T{i}?", "back": "a"} for i in range(agent.MAX_CARDS + 5)]
+    api.replies = [a_calls(("add_flashcards", {"code": "D413", "cards": many}),
+                           ("add_flashcards", {"code": "D413", "cards": many[:5]})), a_text("Proposed 45.")]
+    agent.reply(seeded, tid, "x" * 9000)  # a pasted list, longer than the old 4,000-character cap
+    assert api.bodies[0]["max_tokens"] >= ai.BULK_MAX_TOKENS
+    assert len(api.bodies[0]["messages"][0]["content"]) == 9000
+    sizes = [len(json.loads(p[0])["cards"]) for p in seeded.execute("SELECT payload_json FROM agent_proposals ORDER BY id")]
+    assert sizes == [agent.MAX_CARDS, 5]
+
+
 # ---------------------------------------------------------------- pages
 
 def test_ask_hidden_when_off(client):
@@ -218,3 +252,22 @@ def test_ask_flow(client, api, monkeypatch):
         assert conn.execute("SELECT exam_date FROM courses WHERE code = 'D413'").fetchone()[0] == "2026-10-21"
     finally:
         conn.close()
+
+
+def test_memory_page(client, api, monkeypatch):
+    use(monkeypatch)
+    assert "0 things the agent remembers" in client.get("/ask").text
+    client.post("/ask/memory", data={"text": "Prefers short sessions", "course": ""})
+    client.post("/ask/memory", data={"text": "Weak on multiplexing", "course": "D413"})
+    page = client.get("/ask/memory").text
+    assert "Prefers short sessions" in page and "Weak on multiplexing" in page and "added by you" in page
+    assert "empty" in client.post("/ask/memory", data={"text": " "}).text
+    conn = db.connect()
+    try:
+        mid = conn.execute("SELECT id FROM agent_memory WHERE text LIKE 'Prefers%'").fetchone()[0]
+    finally:
+        conn.close()
+    client.post(f"/ask/memory/{mid}/delete")
+    page = client.get("/ask/memory").text
+    assert "Prefers short sessions" not in page and "Weak on multiplexing" in page
+    assert "1 thing the agent remembers" in client.get("/ask").text
