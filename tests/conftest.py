@@ -16,6 +16,12 @@ from app import db, seed  # noqa: E402
 from app.config import settings  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_login_throttle():
+    from app import auth
+    auth._failures.clear()
+
+
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)

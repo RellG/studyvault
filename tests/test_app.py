@@ -24,6 +24,24 @@ def test_wrong_password_rejected(data_dir):
         assert c.get("/", follow_redirects=False).status_code == 303
 
 
+def test_login_locks_out_after_repeated_failures(data_dir, monkeypatch):
+    from app import auth
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(auth.asyncio, "sleep", no_sleep)
+    with TestClient(app) as c:
+        h = {"cf-connecting-ip": "203.0.113.9"}
+        for _ in range(auth.MAX_FAILURES):
+            assert c.post("/login", data={"password": "nope"}, headers=h).status_code == 401
+        # Locked out: even the right password is refused for this client...
+        assert c.post("/login", data={"password": "test-pass"}, headers=h, follow_redirects=False).status_code == 429
+        # ...but a different client is unaffected.
+        r = c.post("/login", data={"password": "test-pass"}, headers={"cf-connecting-ip": "198.51.100.7"}, follow_redirects=False)
+        assert r.status_code == 303
+
+
 def test_login_and_dashboard(client):
     r = client.get("/")
     assert r.status_code == 200
