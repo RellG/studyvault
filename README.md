@@ -12,7 +12,9 @@ It was built for the B.S. Cloud & Network Engineering – AWS program, but the c
 
 | | |
 |---|---|
-| **Dashboard** | Current term, CU passed vs. target with a pace projection, SAP ratio (green / amber / red), Term 1 minimum check, projected graduation, next course with readiness and cards due, exam countdowns, certs earned, study streak |
+| **Today** | Starts with the immediate work: resume the last note, cards due, and the next three tasks with Done / Tomorrow. Below it: current term, CU passed vs. target with a pace projection, SAP ratio (green / amber / red), Term 1 minimum check, projected graduation, next course with readiness and cards due, exam countdowns, certs earned, study streak |
+| **Tasks** | A lightweight study-task list (global page and a tab per course): due date, minutes, priority, postpone, done or cancel. A task can close itself from real evidence (clearing a course's due cards, finishing a quiz); generated content never completes one. The Ask agent can propose tasks, and you Apply them |
+| **Navigation** | Today, Courses, Review, Tasks, Ask and Search up front, the rest under More; course pages group into Notes, Practice, Tasks and Assessment. Usable at 390 px wide, 44 px touch targets, visible keyboard focus, reduced-motion aware |
 | **Terms & courses** | Term timeline, course status (not started → in progress → pre-assessed → scheduled → passed / revision needed), target vs. mentor due dates, move or add courses mid-term |
 | **Course notebook** | Overview, Competencies, Notebook and Mistakes tabs. Markdown editor (EasyMDE) with 2 s autosave, conflict detection, code highlighting, image paste/upload, `[[D325]]` links between courses. Files are git-committed in batches |
 | **Competencies & readiness** | Paste the competency list; rate confidence 1–5; weakest three shown on every course page. Readiness = 40% confidence + 30% flashcard recall + 30% latest quiz, with the formula shown |

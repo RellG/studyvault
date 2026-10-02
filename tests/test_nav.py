@@ -17,6 +17,8 @@ def test_current_page_is_marked(client):
     assert re.findall(r'<a href="([^"]+)" class="active" aria-current="page"', nav("/")) == ["/"]
     assert re.findall(r'<a href="([^"]+)" class="active" aria-current="page"', nav("/review")) == ["/review"]
     assert re.findall(r'<a href="([^"]+)" class="active" aria-current="page"', nav("/courses/D413/cards")) == ["/terms"]
+    assert re.findall(r'<a href="([^"]+)" class="active" aria-current="page"', nav("/tasks")) == ["/tasks"]
+    assert re.findall(r'<a href="([^"]+)" class="active" aria-current="page"', nav("/courses/D413/tasks")) == ["/terms"]
     assert '<summary class="active">More' in nav("/settings")
     assert 'aria-current="page">Settings' in nav("/settings")
     assert 'class="active"' not in nav("/certs").split("<details")[0]  # More's own pages don't light a main item

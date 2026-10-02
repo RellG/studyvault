@@ -16,7 +16,7 @@ BLANK = {"title": "", "kind": "study", "due_on": "", "est_minutes": "", "priorit
 def _back(form, fallback="/tasks") -> str:
     """Where to go after an action: the page it came from (a local path only)."""
     path = str(form.get("back") or "")
-    return path if path.startswith("/") and not path.startswith("//") else fallback
+    return path if path.startswith("/") and not path.startswith("//") and "\\" not in path else fallback
 
 
 def _get(conn, task_id):

@@ -167,9 +167,25 @@ def test_create_errors_keep_what_was_typed(client):
 
 
 def test_back_is_a_local_path_only(client):
-    for bad in ("//evil.example", "https://evil.example", ""):
+    for bad in ("//evil.example", "/\\evil.example", "https://evil.example", ""):
         r = client.post("/tasks", data={"title": "x", "back": bad}, follow_redirects=False)
         assert r.headers["location"] == "/tasks", bad
+
+
+def test_changing_the_course_drops_the_old_competency(client):
+    conn = db.connect()
+    try:
+        competencies.import_list(conn, course(conn), ["Explain the OSI model"])
+        comp_id = competencies.list_for(conn, course(conn)["id"])[0]["id"]
+        tid = tasks.add(conn, "Moves", course_id=course(conn)["id"], competency_id=comp_id)
+        other = course(conn, "D282")["id"]
+        r = client.post(f"/tasks/{tid}/edit", data={"title": "Moves", "course_id": str(other), "competency_id": str(comp_id),
+                                                    "status": "todo", "kind": "study", "priority": "2", "done_rule": "manual"},
+                        follow_redirects=False)
+        t = tasks.get(conn, tid)
+        assert r.status_code == 303 and t["course_id"] == other and t["competency_id"] is None
+    finally:
+        conn.close()
 
 
 def test_course_tab_has_competency_picker_and_badge(client):
