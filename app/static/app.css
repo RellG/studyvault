@@ -390,6 +390,30 @@ table.diff .diff_header, table.diff .diff_next { color: var(--muted); }
 .tools-used { margin: 0 0 .35rem .1rem; }
 .rendered.answer > :first-child { margin-top: 0; }
 .rendered.answer > :last-child { margin-bottom: 0; }
+/* Waiting for a reply: a bubble with moving dots, the time so far and what the agent has looked at. */
+.msg.thinking { align-self: flex-start; background: var(--surface-2, var(--accent-soft)); border-radius: var(--radius); padding: .6rem .9rem; max-width: min(88%, 44rem); }
+.thinking-line { display: flex; align-items: center; gap: .55rem; font-weight: 500; }
+.thinking-steps:empty { display: none; }
+.thinking-steps { margin-top: .25rem; }
+.dots { --d: 6px; display: inline-block; flex: none; }
+.dots { width: calc(var(--d) * 3 + 6px); height: var(--d); background:
+  radial-gradient(circle closest-side, var(--accent) 98%, transparent) 0 50% / var(--d) var(--d) no-repeat,
+  radial-gradient(circle closest-side, var(--accent) 98%, transparent) 50% 50% / var(--d) var(--d) no-repeat,
+  radial-gradient(circle closest-side, var(--accent) 98%, transparent) 100% 50% / var(--d) var(--d) no-repeat;
+  animation: sv-dots 1s infinite linear; }
+@keyframes sv-dots { 33% { opacity: .35; } 66% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots { animation: none; } }
+/* On a wide screen the message box stays at the bottom of a chat while you scroll back; on a phone it would hide the chat. */
+@media (min-width: 641px) and (min-height: 600px) {
+  .composer { position: sticky; bottom: .5rem; z-index: 2; box-shadow: 0 -6px 18px -12px rgba(0, 0, 0, .35); }
+}
+.quick-more { margin-top: .5rem; }
+.quick-more > summary { cursor: pointer; color: var(--muted); }
+.quick-more[open] > summary { margin-bottom: .4rem; }
+.composer[aria-busy="true"] .ask-box { opacity: .7; }
+.proposal-list { margin: .4rem 0 .6rem; max-height: 22rem; overflow: auto; }
+.proposal-list li { padding: .15rem 0; }
+.proposal .was { margin: .2rem 0 .3rem; }
 .proposal { margin-top: .7rem; border-color: var(--amber); }
 .proposal.applied { border-color: var(--green); }
 .proposal.dismissed { border-color: var(--border); opacity: .75; }

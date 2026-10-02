@@ -24,15 +24,14 @@
   {% endfor %}
 </div>
 
-<form class="card" method="post" action="/ask/{{ thread.id }}/send" data-wait>
+<form class="card composer" method="post" action="/ask/{{ thread.id }}/send" data-chat="{{ thread.id }}">
   <label for="ask-text">Message</label>
-  <textarea id="ask-text" name="text" rows="3" maxlength="12000" class="ask-box" placeholder="Reply, or ask something else…"></textarea>
+  <textarea id="ask-text" name="text" rows="2" maxlength="12000" class="ask-box" placeholder="Reply, or ask something else…"></textarea>
   <div class="row spread" style="margin-top: .6rem">
     <span class="small muted">Model: {{ provider }} · Ctrl+Enter sends</span>
     <button class="primary" type="submit">Send</button>
   </div>
-  {% include "agent/_quick.html" %}
-  <p class="small muted ask-wait" hidden>Thinking… looking things up can take a minute; a long list of cards, a couple.</p>
+  <details class="quick-more"><summary class="small">Suggestions</summary>{% include "agent/_quick.html" %}</details>
 </form>
 {% endblock %}
 {% block scripts %}{% include "agent/_script.html" %}{% endblock %}

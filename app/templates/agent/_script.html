@@ -1,14 +1,9 @@
 <script>
-  // A reply can take a while (several lookups): show that it's working and stop double sends.
-  document.querySelectorAll("form[data-wait]").forEach(function (f) {
-    f.addEventListener("submit", function () {
-      var w = f.querySelector(".ask-wait");
-      if (w) w.hidden = false;
-      f.querySelectorAll("button").forEach(function (b) { setTimeout(function () { b.disabled = true; }, 0); });
-    });
-    var t = f.querySelector("textarea[name=text]");
-    if (t) t.addEventListener("keydown", function (e) {  // Ctrl/Cmd+Enter sends
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && t.value.trim()) { e.preventDefault(); f.requestSubmit(); }
+(function () {
+  // Ctrl/Cmd+Enter sends from any Ask box.
+  document.querySelectorAll("textarea[name=text]").forEach(function (t) {
+    t.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && t.value.trim()) { e.preventDefault(); t.form.requestSubmit(); }
     });
   });
   // "Explain…"-style prompts need the rest typed in: put the start in the box.
@@ -20,4 +15,111 @@
       t.setSelectionRange(t.value.length, t.value.length);
     });
   });
+  // "All N" on a long delete proposal ticks or unticks every row.
+  document.addEventListener("change", function (e) {
+    if (!e.target.matches("[data-tick-all]")) return;
+    e.target.form.querySelectorAll("input[name=keep]").forEach(function (c) { c.checked = e.target.checked; });
+  });
+
+  // The message the submit means: a quick-prompt button's text, or what's in the box.
+  function messageOf(form, e) {
+    var b = e.submitter;
+    if (b && b.name === "quick") return b.value;
+    return form.querySelector("textarea[name=text]").value.trim();
+  }
+
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; }
+  // New chat: create it, then let the chat page send the first message, so it can show progress while it waits.
+  var start = document.querySelector("form[data-new-chat]");
+  if (start) start.addEventListener("submit", function (e) {
+    var msg = messageOf(start, e);
+    if (!msg) return;
+    e.preventDefault();
+    start.querySelector(".ask-wait").hidden = false;
+    var body = new URLSearchParams({ text: msg, course: start.querySelector("[name=course]").value, start: "1" });
+    fetch(start.action, { method: "POST", body: body })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (j) {
+        var key = "sv-ask-first:" + j.id, kept = false;
+        try { sessionStorage.setItem(key, msg); kept = sessionStorage.getItem(key) === msg; } catch (err) {}
+        if (kept) { location.href = "/ask/" + j.id; return; }
+        // no session storage (private mode): send it the plain way, the page just waits without progress
+        var f = el("form"), i = el("input");
+        f.method = "post"; f.action = "/ask/" + j.id + "/send";
+        i.type = "hidden"; i.name = "text"; i.value = msg;
+        f.appendChild(i); document.body.appendChild(f); HTMLFormElement.prototype.submit.call(f);
+      })
+      .catch(function () { start.querySelector(".ask-wait").hidden = true; HTMLFormElement.prototype.submit.call(start); });
+  });
+
+  // A chat: show the message at once, a "Thinking" bubble with what the agent is looking at, then the answer in place.
+  var form = document.querySelector("form[data-chat]");
+  if (!form) return;
+  var tid = form.dataset.chat, chat = document.querySelector(".chat"), box = form.querySelector("textarea[name=text]");
+  var sendBtn = form.querySelector("button[type=submit]:not([name])"), busy = false;
+
+  function how() { return matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"; }
+  function toBottom() { window.scrollTo({ top: document.documentElement.scrollHeight, behavior: how() }); }  // the newest message, just above the box
+
+  function send(msg) {
+    if (busy || !msg) return;
+    busy = true;
+    form.setAttribute("aria-busy", "true");
+    sendBtn.disabled = true;
+    var old = document.getElementById("latest");
+    if (old) old.removeAttribute("id");
+    var mine = el("div", "msg user"); mine.appendChild(el("div", "bubble", msg)); chat.appendChild(mine);
+    var wait = el("div", "msg assistant thinking");
+    var line = el("div", "thinking-line"), what = el("div", "small muted thinking-steps");
+    line.setAttribute("role", "status");
+    line.appendChild(el("span", "dots", "")); line.appendChild(el("span", "thinking-text", "Thinking…"));
+    wait.appendChild(line); wait.appendChild(what); chat.appendChild(wait);
+    var more = form.querySelector(".quick-more"); if (more) more.open = false;
+    toBottom();
+    var sentText = box.value; box.value = "";
+
+    var t0 = Date.now();
+    function tick(p) {
+      var s = p && p.seconds != null ? p.seconds : Math.round((Date.now() - t0) / 1000);
+      wait.querySelector(".thinking-text").textContent = (p && p.steps && p.steps.length ? "Working" : "Thinking") + "… " + s + "s";
+      if (p && p.steps && p.steps.length) what.textContent = "Looked at: " + p.steps.slice(-6).join(" · ");
+    }
+    var clock = setInterval(function () { tick(null); }, 1000);
+    var poll = setInterval(function () {
+      fetch("/ask/" + tid + "/progress").then(function (r) { return r.json(); }).then(function (p) { if (!p.done) tick(p); }).catch(function () {});
+    }, 1500);
+
+    fetch(form.action, { method: "POST", body: new URLSearchParams({ text: msg }) })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var fresh = doc.querySelector(".chat");
+        if (!fresh) throw new Error("no chat in reply");
+        chat.innerHTML = fresh.innerHTML;
+        var latest = document.getElementById("latest");
+        if (latest) latest.scrollIntoView({ block: "start", behavior: how() });  // read the answer from its start
+      })
+      .catch(function () {
+        wait.classList.remove("thinking");
+        wait.innerHTML = "";
+        wait.appendChild(el("div", "banner red", "Couldn't reach studyvault, so that message may not have been sent. Your text is back in the box: send it again, or reload the page to see if an answer arrived."));
+        if (!box.value) box.value = sentText || msg;
+      })
+      .finally(function () {
+        clearInterval(clock); clearInterval(poll);
+        busy = false; form.removeAttribute("aria-busy"); sendBtn.disabled = false;
+        box.focus({ preventScroll: true });
+      });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    send(messageOf(form, e));
+  });
+
+  // First message of a chat started on the Ask page.
+  var first = null;
+  try { first = sessionStorage.getItem("sv-ask-first:" + tid); sessionStorage.removeItem("sv-ask-first:" + tid); } catch (err) {}
+  if (first && !chat.querySelector(".msg")) send(first);
+})();
 </script>

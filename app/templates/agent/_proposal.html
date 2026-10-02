@@ -112,9 +112,34 @@
       {% if cur.done_rule != 'manual' %}<p class="small muted">This task closes itself when {{ TASK_RULES[cur.done_rule] }}, so Done isn't offered here.</p>{% endif %}
       {% endif %}
       {% set go = 'Apply change' %}
+    {% elif p.kind in ('delete_cards', 'delete_questions') %}
+      {% set items = pl.cards if p.kind == 'delete_cards' else pl.questions %}
+      {% set noun = 'card' if p.kind == 'delete_cards' else 'question' %}
+      <p class="small muted">Ticked {{ noun }}s are deleted for good{% if p.kind == 'delete_cards' %}, with their review history{% else %}; past quiz scores stay{% endif %}. Untick any to keep.</p>
+      {% if items|length > 6 %}<label class="inline"><input type="checkbox" checked data-tick-all> All {{ items|length }}</label>{% endif %}
+      <ul class="plain proposal-list">
+        {% for it in items %}
+        <li><label class="inline"><input type="checkbox" name="keep" value="{{ it.id }}" checked>
+          {% if p.kind == 'delete_cards' %}{{ it.front }} <span class="muted small">→ {{ it.back|truncate(80) }}</span>{% else %}{{ it.prompt|truncate(160) }}{% endif %}</label></li>
+        {% endfor %}
+      </ul>
+      {% set go = 'Delete ticked ' ~ noun ~ 's' %}{% set danger = true %}
+    {% elif p.kind == 'edit_cards' %}
+      <p class="small muted">The current text is shown above each edit. Only ticked cards change; their review history is kept.</p>
+      {% for c in pl.cards %}
+      <div class="proposal-item">
+        <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Change</label>
+        <p class="small muted was">Now: {{ c.old_front }} → {{ c.old_back }}</p>
+        <div class="form-grid">
+          <div><label for="ef{{ p.id }}_{{ loop.index0 }}">Front</label><textarea id="ef{{ p.id }}_{{ loop.index0 }}" name="front_{{ loop.index0 }}" rows="2">{{ c.front }}</textarea></div>
+          <div><label for="eb{{ p.id }}_{{ loop.index0 }}">Back</label><textarea id="eb{{ p.id }}_{{ loop.index0 }}" name="back_{{ loop.index0 }}" rows="2">{{ c.back }}</textarea></div>
+        </div>
+      </div>
+      {% endfor %}
+      {% set go = 'Save ticked edits' %}
     {% endif %}
     <div class="actions">
-      <button class="primary" type="submit">{{ go }}</button>
+      <button class="{{ 'danger' if danger else 'primary' }}" type="submit">{{ go }}</button>
       <button type="submit" formaction="/ask/proposals/{{ p.id }}/dismiss">Dismiss</button>
     </div>
   </form>

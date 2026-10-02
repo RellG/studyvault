@@ -4,7 +4,7 @@ import json
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from .. import agent, ai, catalog, markdown, tasks
 from ..db import get_db
@@ -19,7 +19,8 @@ FILL = ["Explain this differently: ", "Gap-check this competency against my note
         "From my pre-assessment, I need to learn these (make flashcards for every one, and remember my weak areas):\n"]
 KIND_LABELS = {"cards": "Flashcards", "questions": "Practice questions", "notebook": "Notebook section",
                "confidence": "Competency confidence", "exam": "Exam date", "quiz": "Practice quiz", "study": "Study time",
-               "tasks": "Study tasks", "task_update": "Task change"}
+               "tasks": "Study tasks", "task_update": "Task change", "delete_cards": "Delete flashcards",
+               "edit_cards": "Edit flashcards", "delete_questions": "Delete practice questions"}
 
 
 def _require_ai():
@@ -85,13 +86,16 @@ def memory_delete(mid: int, conn=Depends(get_db)):
 
 
 @router.post("/ask/new")
-def ask_new(text: str = Form(""), quick: str = Form(""), course: str = Form(""), conn=Depends(get_db)):
+def ask_new(text: str = Form(""), quick: str = Form(""), course: str = Form(""), start: str = Form(""),
+            conn=Depends(get_db)):
     _require_ai()
     message = (quick or text).strip()
     c = catalog.get_course(conn, course) if course else None
     if not message:
         return RedirectResponse(f"/ask?course={c['code'] if c else ''}", status_code=303)
     tid = agent.create_thread(conn, message, c["id"] if c else None)
+    if start:  # the chat page's script sends the first message itself, so it can show progress while it waits
+        return JSONResponse({"id": tid})
     agent.reply(conn, tid, message)
     return RedirectResponse(f"/ask/{tid}#latest", status_code=303)
 
@@ -120,6 +124,13 @@ def ask_thread(request: Request, tid: int, conn=Depends(get_db)):
     return render(request, "agent/thread.html", thread=t, messages=messages, quick=QUICK, fill=FILL,
                   provider=ai.describe(), error=request.query_params.get("error"), current_conf=comps,
                   current_task=current_task)
+
+
+@router.get("/ask/{tid}/progress")
+def ask_progress(tid: int):
+    """Polled by the chat while a reply is on its way: how long, and what it has looked at so far."""
+    _require_ai()
+    return agent.reply_progress(tid) or {"done": True}
 
 
 @router.post("/ask/{tid}/send")

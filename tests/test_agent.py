@@ -5,7 +5,7 @@ import httpx
 import pytest
 from starlette.datastructures import FormData
 
-from app import agent, ai, catalog, competencies, db, notes_fs
+from app import agent, ai, cards, catalog, competencies, db, notes_fs, quizzes
 from app.config import settings
 
 
@@ -189,7 +189,8 @@ def test_every_read_tool_runs_on_seeded_data(seeded, tid):
     args = {"get_overview": {}, "list_courses": {"term": 1}, "get_course": {"code": "D413"},
             "search_notes": {"query": "cloud"}, "read_note": {"code": "D413", "name": "overview"},
             "list_competencies": {"code": "D413"}, "get_card_stats": {}, "get_quiz_history": {"code": "D413"},
-            "get_mistakes": {"code": "D413"}, "get_study_time": {}, "list_certs": {}, "list_tasks": {}}
+            "get_mistakes": {"code": "D413"}, "get_study_time": {}, "list_certs": {}, "list_tasks": {},
+            "list_flashcards": {"code": "D413"}, "list_questions": {"code": "D413"}}
     assert set(args) == {n for n, t in agent.TOOLS.items() if t["kind"] == "read"}
     for name, a in args.items():
         out = json.loads(agent.run_tool(k, ai.Call("", name, a)))
@@ -271,3 +272,85 @@ def test_memory_page(client, api, monkeypatch):
     page = client.get("/ask/memory").text
     assert "Prefers short sessions" not in page and "Weak on multiplexing" in page
     assert "1 thing the agent remembers" in client.get("/ask").text
+
+
+# ---------------------------------------------------------------- editing and deleting cards / questions
+
+def _proposal(conn, out):
+    return conn.execute("SELECT * FROM agent_proposals WHERE id = ?", (out["proposal_id"],)).fetchone()
+
+
+def test_delete_flashcards_needs_apply_and_stays_in_its_course(seeded, tid):
+    d413, other = catalog.get_course(seeded, "D413"), seeded.execute("SELECT * FROM courses WHERE code != 'D413'").fetchone()
+    mine = [cards.add(seeded, d413["id"], f"Q{i}", f"A{i}") for i in range(3)]
+    theirs = cards.add(seeded, other["id"], "elsewhere", "x")
+    cards.grade(seeded, mine[0], 3)
+    k = ctx(seeded, tid)
+    listed = json.loads(agent.run_tool(k, ai.Call("", "list_flashcards", {"code": "D413"})))
+    assert [c["id"] for c in listed["cards"]] == mine
+    bad = json.loads(agent.run_tool(k, ai.Call("", "delete_flashcards", {"code": "D413", "card_ids": [theirs]})))
+    assert "None of those ids" in bad["error"]  # another course's card can't be named
+    out = json.loads(agent.run_tool(k, ai.Call("", "delete_flashcards", {"code": "D413", "all": True})))
+    assert seeded.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 4  # nothing gone before Apply
+    p = _proposal(seeded, out)
+    with pytest.raises(agent.ApplyError):
+        agent.apply(seeded, p, FormData([]))  # nothing ticked
+    result, link = agent.apply(seeded, p, FormData([("keep", str(mine[0])), ("keep", str(mine[1])), ("keep", str(theirs))]))
+    assert result == "Deleted 2 cards from D413." and link == "/courses/D413/cards"
+    left = {r[0] for r in seeded.execute("SELECT id FROM cards")}
+    assert left == {mine[2], theirs}  # the unticked one and the other course's card survive
+    assert seeded.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0  # history went with the card
+
+
+def test_edit_flashcards_keeps_history(seeded, tid):
+    d413 = catalog.get_course(seeded, "D413")
+    cid = cards.add(seeded, d413["id"], "SSH port?", "21")
+    cards.grade(seeded, cid, 1)
+    k = ctx(seeded, tid)
+    same = json.loads(agent.run_tool(k, ai.Call("", "edit_flashcards", {"code": "D413", "edits": [{"card_id": cid, "back": "21"}]})))
+    assert "Nothing to change" in same["error"]
+    out = json.loads(agent.run_tool(k, ai.Call("", "edit_flashcards", {"code": "D413", "edits": [{"card_id": cid, "back": "22"}]})))
+    p = _proposal(seeded, out)
+    assert json.loads(p["payload_json"])["cards"][0]["old_back"] == "21"
+    assert agent.apply(seeded, p, FormData([("keep", "0"), ("front_0", "SSH port?"), ("back_0", "22 (TCP)")]))[0] == "Updated 1 card in D413."
+    assert seeded.execute("SELECT back FROM cards WHERE id = ?", (cid,)).fetchone()[0] == "22 (TCP)"
+    assert seeded.execute("SELECT COUNT(*) FROM reviews WHERE card_id = ?", (cid,)).fetchone()[0] == 1
+
+
+def test_delete_questions(seeded, tid):
+    d413 = catalog.get_course(seeded, "D413")
+    qids = [quizzes.save(seeded, d413["id"], {"kind": "mc", "prompt": f"Q{i}?", "choices": "a\n* b"}) for i in range(2)]
+    k = ctx(seeded, tid)
+    assert [q["id"] for q in json.loads(agent.run_tool(k, ai.Call("", "list_questions", {"code": "D413"})))["questions"]] == qids
+    out = json.loads(agent.run_tool(k, ai.Call("", "delete_questions", {"code": "D413", "question_ids": [qids[1]]})))
+    assert agent.apply(seeded, _proposal(seeded, out), FormData([("keep", str(qids[1]))]))[0] == "Deleted 1 question from D413."
+    assert [r[0] for r in seeded.execute("SELECT id FROM questions")] == [qids[0]]
+
+
+def test_progress_while_a_reply_runs(seeded, tid, api, monkeypatch):
+    use(monkeypatch)
+    seen = []
+    real_chat = ai.chat
+
+    def chat(*a, **kw):
+        seen.append(agent.reply_progress(tid))
+        return real_chat(*a, **kw)
+    monkeypatch.setattr(agent.ai, "chat", chat)
+    api.replies = [a_calls(("get_card_stats", {"code": "D413"})), a_text("You have no cards yet.")]
+    agent.reply(seeded, tid, "how are my cards?")
+    assert seen[0]["round"] == 1 and seen[0]["steps"] == []
+    assert seen[1]["round"] == 2 and seen[1]["steps"] == ["D413 flashcards"]
+    assert agent.reply_progress(tid) is None  # cleared once the answer is stored
+
+
+def test_chat_page_sends_the_first_message_itself(client, api, monkeypatch):
+    use(monkeypatch)
+    api.replies = [a_text("Hello!")]
+    r = client.post("/ask/new", data={"text": "hi there", "start": "1"})
+    tid = r.json()["id"]
+    assert len(api.bodies) == 0  # no model call yet: the chat page sends it and shows progress meanwhile
+    assert client.get(f"/ask/{tid}/progress").json() == {"done": True}
+    page = client.get(f"/ask/{tid}").text
+    assert f'data-chat="{tid}"' in page and "sv-ask-first:" in page
+    r = client.post(f"/ask/{tid}/send", data={"text": "hi there"})
+    assert "Hello!" in r.text and len(api.bodies) == 1

@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import re
+import time
 
 from . import ai, assessments, cards, catalog, clock, competencies as comp, notes_fs, progress, quizzes, readiness
 from . import tasks as study_tasks
@@ -19,10 +20,12 @@ MAX_ROUNDS = 6            # model calls per message: keeps free-tier request cou
 MAX_CALLS_PER_ROUND = 8
 RESULT_CHARS = 4000       # per tool result sent back to the model
 NOTE_CHARS = 8000         # read_note / get_mistakes get more room
+LIST_CHARS = 24000        # list_flashcards / list_questions: a whole deck, so edits and deletes can name ids
 HISTORY_MESSAGES = 20     # earlier messages resent each turn (final text only, not their lookups)
 MAX_MESSAGE_CHARS = 12000  # room for a pasted list of pre-assessment topics
 MAX_CARDS = 40            # per add_flashcards call; a longer list takes several calls
 MAX_TASKS = 12            # per propose_tasks call
+LIST_LIMIT = 150          # cards or questions per list_flashcards / list_questions call
 MEMORY_TEXT = 300         # one memory
 MEMORY_CHARS = 4000       # all memories sent with each request; the newest win if there are more
 READABLE_NOTES = ["overview", "competencies", "notebook", "mistakes"]
@@ -356,6 +359,102 @@ def add_questions(ctx, code, questions, competency_id=None):
                     f"{len(out[:20])} practice questions for {c['code']}")
 
 
+@tool("list_flashcards", "read", "flashcard list",
+      "A course's flashcards with their ids (front, back, competency, next due date, AI-made or not), oldest first. "
+      "Use it before editing or deleting cards. Optional: a competency, or words to match in front/back.",
+      {"code": CODE, "competency_id": COMP, "query": {"type": "string", "description": "Words to match (optional)"}},
+      ["code"])
+def list_flashcards(ctx, code, competency_id=None, query=None):
+    c = _course(ctx.conn, code)
+    sql, params = "SELECT * FROM cards WHERE course_id = ?", [c["id"]]
+    if competency_id:
+        sql, params = sql + " AND competency_id = ?", params + [_comp_id(ctx.conn, c, competency_id)]
+    if query:
+        sql, params = sql + " AND (front LIKE ? OR back LIKE ?)", params + [f"%{query}%"] * 2
+    rows = ctx.conn.execute(sql + " ORDER BY id LIMIT ?", (*params, LIST_LIMIT + 1)).fetchall()
+    out = [{"id": r["id"], "front": r["front"][:160], "back": r["back"][:160], "competency_id": r["competency_id"],
+            "due_on": r["due_on"], "ai_made": r["source"] == "ai-accepted"} for r in rows[:LIST_LIMIT]]
+    return {"cards": out or "No cards match.", "more": len(rows) > LIST_LIMIT}
+
+
+@tool("list_questions", "read", "question bank",
+      "A course's practice-question bank with ids (prompt, kind, competency). Use it before deleting questions.",
+      {"code": CODE, "competency_id": COMP}, ["code"])
+def list_questions(ctx, code, competency_id=None):
+    c = _course(ctx.conn, code)
+    rows = quizzes.bank(ctx.conn, c["id"], _comp_id(ctx.conn, c, competency_id) if competency_id else None)
+    out = [{"id": q["id"], "kind": q["kind"], "prompt": q["prompt"][:200], "competency_id": q["competency_id"]}
+           for q in rows[:LIST_LIMIT]]
+    return {"questions": out or "The bank is empty.", "more": len(rows) > LIST_LIMIT}
+
+
+def _pick_rows(conn, table, course, ids, all_):
+    """The rows of a course a delete/edit tool may touch: the given ids that belong to it, or all of them."""
+    if all_:
+        return conn.execute(f"SELECT * FROM {table} WHERE course_id = ? ORDER BY id", (course["id"],)).fetchall()
+    try:
+        ids = sorted({int(i) for i in ids or []})
+    except (TypeError, ValueError):
+        raise ToolError("ids must be numbers from list_flashcards / list_questions.")
+    if not ids:
+        raise ToolError("Give the ids to change (from list_flashcards / list_questions), or all=true.")
+    rows = conn.execute(f"SELECT * FROM {table} WHERE course_id = ? AND id IN ({','.join('?' * len(ids))}) ORDER BY id",
+                        (course["id"], *ids)).fetchall()
+    if not rows:
+        raise ToolError(f"None of those ids are in {course['code']}. Look them up with list_flashcards / list_questions.")
+    return rows
+
+
+IDS = {"type": "array", "items": {"type": "integer"}, "description": "Ids from the list tool"}
+ALL = {"type": "boolean", "description": "true = every one in the course (only when the student asked for all)"}
+
+
+@tool("delete_flashcards", "write", "proposed card deletion",
+      "Propose deleting flashcards (with their review history) from a course: given ids, or all=true for the whole "
+      "deck. The student sees the list, can untick any, and confirms; nothing is deleted before that.",
+      {"code": CODE, "card_ids": IDS, "all": ALL}, ["code"])
+def delete_flashcards(ctx, code, card_ids=None, all=False):  # noqa: A002 — the tool's argument name
+    c = _course(ctx.conn, code)
+    rows = _pick_rows(ctx.conn, "cards", c, card_ids, all)
+    items = [{"id": r["id"], "front": r["front"][:300], "back": r["back"][:300]} for r in rows]
+    return _propose(ctx, "delete_cards", c, {"cards": items}, f"delete {len(items)} flashcards from {c['code']}")
+
+
+@tool("edit_flashcards", "write", "proposed card edits",
+      "Propose fixing existing flashcards (wording, a wrong answer, splitting hairs): give each card's id and its new "
+      f"front and/or back. Up to {MAX_CARDS} per call. Review history is kept.",
+      {"code": CODE, "edits": {"type": "array", "items": {"type": "object", "properties": {
+          "card_id": {"type": "integer"}, "front": {"type": "string"}, "back": {"type": "string"}},
+          "required": ["card_id"]}}}, ["code", "edits"])
+def edit_flashcards(ctx, code, edits):
+    c = _course(ctx.conn, code)
+    edits = [e for e in (edits if isinstance(edits, list) else []) if isinstance(e, dict)][:MAX_CARDS]
+    rows = {r["id"]: r for r in _pick_rows(ctx.conn, "cards", c, [e.get("card_id") for e in edits], False)}
+    items = []
+    for e in edits:
+        r = rows.get(int(e.get("card_id") or 0))
+        if not r:
+            continue
+        front = str(e.get("front") or r["front"]).strip()[:1000]
+        back = str(e.get("back") or r["back"]).strip()[:2000]
+        if (front, back) != (r["front"], r["back"]):
+            items.append({"id": r["id"], "old_front": r["front"], "old_back": r["back"], "front": front, "back": back})
+    if not items:
+        raise ToolError("Nothing to change: the new text matches the cards as they are.")
+    return _propose(ctx, "edit_cards", c, {"cards": items}, f"edit {len(items)} flashcards in {c['code']}")
+
+
+@tool("delete_questions", "write", "proposed question deletion",
+      "Propose deleting practice questions from a course's bank: given ids, or all=true. Past quiz scores stay. "
+      "The student confirms first.",
+      {"code": CODE, "question_ids": IDS, "all": ALL}, ["code"])
+def delete_questions(ctx, code, question_ids=None, all=False):  # noqa: A002
+    c = _course(ctx.conn, code)
+    rows = _pick_rows(ctx.conn, "questions", c, question_ids, all)
+    items = [{"id": r["id"], "prompt": r["prompt"][:300]} for r in rows]
+    return _propose(ctx, "delete_questions", c, {"questions": items}, f"delete {len(items)} questions from {c['code']}")
+
+
 @tool("append_to_notebook", "write", "proposed notebook section",
       "Propose a new dated section at the end of a course notebook (an explanation, summary, study plan or checklist). "
       "Never used for PA work. Existing notes are never changed.",
@@ -620,7 +719,8 @@ def run_tool(ctx, call: ai.Call) -> str:
             log.exception("agent tool %s failed", call.name)
             result = {"error": "That action failed inside studyvault."}
     text = json.dumps(result, default=str, ensure_ascii=False)
-    limit = NOTE_CHARS + 500 if call.name in ("read_note", "get_mistakes") else RESULT_CHARS
+    limit = (NOTE_CHARS + 500 if call.name in ("read_note", "get_mistakes") else
+             LIST_CHARS if call.name in ("list_flashcards", "list_questions") else RESULT_CHARS)
     return text if len(text) <= limit else text[:limit] + "…(truncated)"
 
 
@@ -644,7 +744,7 @@ How to work:
 - Facts about the student's own courses, notes, flashcards, quizzes, progress, dates and schedule come only from your tools. Look them up; never guess them. If a lookup is empty, say so.
 - Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
 - For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
-- Changes (flashcards, questions, notebook sections, confidence ratings, exam dates, quizzes, study time, study tasks) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added.
+- Changes (adding, editing or deleting flashcards; adding or deleting questions; notebook sections, confidence ratings, exam dates, quizzes, study time, study tasks) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added. To edit or delete, look the items up first (list_flashcards / list_questions) and pass their ids; use all=true only when the student asks for everything. Never say you can't edit or delete cards or questions.
 - When the student gives you a list (topics to learn, terms from a pre-assessment, missed questions), cover EVERY item: at least one flashcard per term, more where a term has two things worth knowing. Fill in answers from your own knowledge where their notes have none. A long list takes several add_flashcards calls in the same step, so make them all at once. Then say how many cards you proposed and name any item you left out and why.
 - You have a memory that carries across chats (below). Use `remember` for lasting facts worth knowing next time: weak topics and scores from a pre-assessment, goals, exam plans, how they like to study. Save a pre-assessment's weak topics as a few short memories, not one per term. Use `forget` when a memory turns out wrong or stale. Mention briefly what you saved.
 - Study tasks are the student's plan, not a record of work done. Look at list_tasks before planning; propose small, concrete tasks (one sitting, a date, minutes) rather than a long wish list. A task with done_rule cards_reviewed or quiz_finished is closed by the app when the student really reviews cards or finishes a quiz: you can't mark it done, and adding cards, questions or notes never completes anything. Never say work or a task is done without evidence from your tools (list_tasks shows it); propose "done" only for a manual task, and only when the student says they finished it.
@@ -703,6 +803,16 @@ def create_thread(conn, first_message: str, course_id=None) -> int:
     return cur.lastrowid
 
 
+# What each running reply has done so far, for the "Thinking…" line in the chat (GET /ask/{id}/progress).
+# In memory: the app is one process, and a reply only lives as long as its request.
+_progress: dict[int, dict] = {}
+
+
+def reply_progress(thread_id: int) -> dict | None:
+    p = _progress.get(thread_id)
+    return {"seconds": int(time.time() - p["started"]), "steps": list(p["steps"]), "round": p["round"]} if p else None
+
+
 def reply(conn, thread_id: int, text: str) -> int:
     """Store the user's message, run the model with tools until it answers, store and return the assistant message id.
     AI failures are stored on the assistant message (meta.error) rather than raised."""
@@ -714,8 +824,10 @@ def reply(conn, thread_id: int, text: str) -> int:
     ctx = Ctx(conn, thread)
     msgs = _history(conn, thread_id)
     used, out, error = [], "", None
+    state = _progress[thread_id] = {"started": time.time(), "steps": [], "round": 0}
     try:
-        for _ in range(MAX_ROUNDS):
+        for n in range(MAX_ROUNDS):
+            state["round"] = n + 1
             # a turn that writes 40+ cards needs far more than a chat answer, and takes longer
             turn = ai.chat(system_prompt(conn, thread), msgs, schemas(),
                            max(settings.ai_max_output_tokens, ai.BULK_MAX_TOKENS), ai.BULK_TIMEOUT_S)
@@ -726,8 +838,9 @@ def reply(conn, thread_id: int, text: str) -> int:
             results = []
             for i, call in enumerate(turn.calls):
                 if i < MAX_CALLS_PER_ROUND:
-                    results.append((call, run_tool(ctx, call)))
                     used.append(_use_label(call))
+                    state["steps"].append(used[-1])
+                    results.append((call, run_tool(ctx, call)))
                 else:  # every call still needs an answer
                     results.append((call, json.dumps({"error": "Too many actions at once; this one was skipped."})))
             msgs.append({"role": "tool", "results": results})
@@ -738,6 +851,8 @@ def reply(conn, thread_id: int, text: str) -> int:
             out += "\n\n*(cut off at the output limit)*"
     except ai.AIError as e:
         error = str(e)
+    finally:
+        _progress.pop(thread_id, None)
     meta = {"tools": list(dict.fromkeys(used))}
     if error:
         meta["error"] = error
@@ -877,6 +992,29 @@ def apply(conn, p, form) -> tuple[str, str | None]:
         except study_tasks.TaskError as e:
             raise ApplyError(str(e))
         result, link = f"Updated “{t['title'][:60]}”.", f"{base}/tasks" if c else "/tasks"
+    elif kind in ("delete_cards", "delete_questions"):
+        table, noun = ("cards", "card") if kind == "delete_cards" else ("questions", "question")
+        ids = [int(i) for i in form.getlist("keep") if str(i).isdigit()]
+        if not ids:
+            raise ApplyError(f"Tick at least one {noun} to delete, or press Dismiss.")
+        with conn:  # only rows still in this course; reviews go with their cards (ON DELETE CASCADE)
+            gone = conn.execute(f"DELETE FROM {table} WHERE course_id = ? AND id IN ({','.join('?' * len(ids))})",
+                                (c["id"], *ids)).rowcount
+        result = f"Deleted {gone} {noun}{'s' * (gone != 1)} from {c['code']}."
+        link = f"{base}/cards" if table == "cards" else f"{base}/quizzes"
+    elif kind == "edit_cards":
+        changed = 0
+        with conn:
+            for i in form.getlist("keep"):
+                if not str(i).isdigit() or int(i) >= len(payload["cards"]):
+                    continue
+                front, back = str(form.get(f"front_{i}", "")).strip(), str(form.get(f"back_{i}", "")).strip()
+                if front and back:
+                    changed += conn.execute("UPDATE cards SET front = ?, back = ? WHERE id = ? AND course_id = ?",
+                                            (front, back, payload["cards"][int(i)]["id"], c["id"])).rowcount
+        if not changed:
+            raise ApplyError("No card was changed: keep at least one, with a front and a back (it may have been deleted).")
+        result, link = f"Updated {changed} card{'s' * (changed != 1)} in {c['code']}.", f"{base}/cards"
     else:
         raise ApplyError("Unknown proposal.")
     with conn:
