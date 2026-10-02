@@ -25,10 +25,10 @@
   <form class="card" method="post" action="/sessions/manual">
     <h2>Add time by hand</h2>
     <div class="form-grid">
-      <div><label>Course</label><select name="course_code"><option value="">General</option>
+      <div><label for="m-course">Course</label><select id="m-course" name="course_code"><option value="">General</option>
         {% for c in courses %}<option value="{{ c.code }}">{{ c.code }}</option>{% endfor %}</select></div>
-      <div><label>Date</label><input type="date" name="day" value="{{ today.isoformat() }}" required></div>
-      <div><label>Minutes</label><input type="number" name="minutes" min="1" max="960" required></div>
+      <div><label for="m-day">Date</label><input type="date" id="m-day" name="day" value="{{ today.isoformat() }}" required></div>
+      <div><label for="m-minutes">Minutes</label><input type="number" id="m-minutes" name="minutes" min="1" max="960" required></div>
     </div>
     <div class="actions"><button type="submit">Add</button></div>
   </form>

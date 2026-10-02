@@ -37,3 +37,28 @@ document.addEventListener("submit", function (e) {
 window.addEventListener("pageshow", function () {
   document.querySelectorAll("form[data-sent]").forEach(function (f) { delete f.dataset.sent; f.removeAttribute("aria-busy"); });
 });
+
+// "More" menu in the top bar: closes on Escape, on a click elsewhere, and when focus moves out of it.
+(function () {
+  var more = document.querySelector("details.more");
+  if (!more) return;
+  document.addEventListener("click", function (e) { if (more.open && !more.contains(e.target)) more.open = false; });
+  more.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && more.open) { more.open = false; more.querySelector("summary").focus(); }
+  });
+  more.addEventListener("focusout", function (e) {
+    if (more.open && e.relatedTarget && !more.contains(e.relatedTarget)) more.open = false;
+  });
+})();
+
+// Older forms write <label>Name</label><input> with no for=: tie each such label to the control right after it, so a tap
+// on the label focuses the field and screen readers announce it.
+(function () {
+  var n = 0;
+  document.querySelectorAll("label:not([for])").forEach(function (l) {
+    var c = l.nextElementSibling;
+    if (l.querySelector("input, select, textarea") || !c || !/^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)) return;
+    if (!c.id) c.id = "field-" + (++n);
+    l.htmlFor = c.id;
+  });
+})();
