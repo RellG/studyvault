@@ -2,7 +2,7 @@
 import json
 import random
 
-from . import clock, notes_fs
+from . import clock, notes_fs, tasks
 
 KINDS = {"mc": "Multiple choice", "multi": "Multi-select", "short": "Short answer (self-graded)"}
 
@@ -154,6 +154,7 @@ def finish(conn, attempt_id: int) -> None:
                                (score, clock.now().isoformat(), attempt_id)).rowcount
     if claimed:  # a resent self-grade form finishes nothing twice, so the misses land in Mistakes once
         append_mistakes(conn, attempt, rows)
+        tasks.on_quiz_finished(conn, attempt_id)  # a finished attempt is evidence for "quiz" tasks
 
 
 def append_mistakes(conn, attempt, answer_rows) -> int:

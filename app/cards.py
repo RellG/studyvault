@@ -2,7 +2,7 @@
 import re
 from datetime import datetime
 
-from . import clock, notes_fs, srs
+from . import clock, notes_fs, srs, tasks
 
 QA_INLINE_RE = re.compile(r"^\s*Q:\s*(.+?)\s+/?\s*A:\s*(.+)$", re.I)
 Q_RE = re.compile(r"^\s*Q:\s*(.*)$", re.I)
@@ -181,6 +181,7 @@ def grade(conn, card_id: int, g: int) -> srs.State:
                      (new.ease, new.interval, new.reps, srs.due_on(new, clock.today()).isoformat(), card_id))
         conn.execute("INSERT INTO reviews(card_id, reviewed_at, grade) VALUES (?, ?, ?)",
                      (card_id, clock.now().isoformat(), g))
+    tasks.on_card_reviewed(conn, card)  # a real review is evidence for "review cards" tasks
     return new
 
 

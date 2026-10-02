@@ -1,0 +1,32 @@
+{# add-a-task form; needs form, error, back. Optional `course` (a fixed course) and `comps` (its competencies) #}
+<details class="card add-task" id="add-task" {{ 'open' if error or not (due_now or later or someday) }}>
+  <summary>Add a task</summary>
+  <form method="post" action="/tasks">
+    {% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+    <input type="hidden" name="back" value="{{ back }}">
+    <label for="nt-title">What will you do?</label>
+    <input type="text" id="nt-title" name="title" required maxlength="200" value="{{ form.title }}" placeholder="e.g. Review the OSPF notes, then clear the cards">
+    <div class="form-grid">
+      {% if course %}<input type="hidden" name="course" value="{{ course.code }}">
+      {% if comps %}<div><label for="nt-comp">Competency <span class="muted small">(optional)</span></label>
+        <select id="nt-comp" name="competency_id"><option value="">None</option>
+          {% for c in comps %}<option value="{{ c.id }}" {{ 'selected' if form.competency_id|string == c.id|string }}>{{ c.text|truncate(60, True, '…') }}</option>{% endfor %}</select></div>{% endif %}
+      {% else %}
+      <div><label for="nt-course">Course <span class="muted small">(optional)</span></label>
+        <select id="nt-course" name="course"><option value="">None</option>
+          {% for c in courses %}<option value="{{ c.code }}" {{ 'selected' if form.course == c.code }}>{{ c.code }} · {{ c.title }}</option>{% endfor %}</select></div>
+      {% endif %}
+      <div><label for="nt-kind">Type</label>
+        <select id="nt-kind" name="kind">{% for k, label in TASK_KINDS.items() %}<option value="{{ k }}" {{ 'selected' if form.kind == k }}>{{ label }}</option>{% endfor %}</select></div>
+      <div><label for="nt-due">Due <span class="muted small">(optional)</span></label>
+        <input type="date" id="nt-due" name="due_on" value="{{ form.due_on }}"></div>
+      <div><label for="nt-min">Minutes <span class="muted small">(optional)</span></label>
+        <input type="number" id="nt-min" name="est_minutes" min="1" max="1440" value="{{ form.est_minutes }}"></div>
+      <div><label for="nt-pri">Priority</label>
+        <select id="nt-pri" name="priority">{% for n, label in TASK_PRIORITIES.items() %}<option value="{{ n }}" {{ 'selected' if form.priority|string == n|string }}>{{ label }}</option>{% endfor %}</select></div>
+      <div><label for="nt-rule">Counts as done when</label>
+        <select id="nt-rule" name="done_rule">{% for k, label in TASK_RULES.items() %}<option value="{{ k }}" {{ 'selected' if form.done_rule == k }}>{{ label }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Add task</button></div>
+  </form>
+</details>

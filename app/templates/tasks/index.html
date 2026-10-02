@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Tasks · studyvault{% endblock %}
+{% block content %}
+{% set back = "/tasks" %}
+<h1>Tasks</h1>
+<p class="muted small">Plan the work, then do it. A task closes when you mark it done, or by itself when the app sees the work: clearing a course's due cards, or finishing a quiz.</p>
+{% include "tasks/_lists.html" %}
+<div style="margin-top: 1.2rem">{% include "tasks/_form.html" %}</div>
+{% endblock %}

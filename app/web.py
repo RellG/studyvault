@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from . import appearance, clock
+from . import appearance, clock, tasks
 from .config import settings
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -38,6 +38,8 @@ def nav_section(path: str) -> str:
 
 templates.env.filters["date"] = _fmt_date
 templates.env.globals["STATUS_LABELS"] = STATUS_LABELS
+templates.env.globals.update(TASK_KINDS=tasks.KINDS, TASK_STATUSES=tasks.STATUSES, TASK_RULES=tasks.RULES,
+                             TASK_PRIORITIES=tasks.PRIORITIES)
 
 # Extra per-request context providers registered by routers (e.g. the running study timer).
 context_providers = []

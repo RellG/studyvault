@@ -11,10 +11,12 @@ import re
 import subprocess
 import tempfile
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from . import clock
 from .config import settings
+from .db import get_meta, set_meta
 
 log = logging.getLogger("studyvault.notes")
 
@@ -199,6 +201,30 @@ def append_note(conn, course, name: str, text: str) -> str:
             current = _template(course, check_name(name))
         sep = "" if current.endswith("\n\n") else ("\n" if current.endswith("\n") else "\n\n")
         return write_note(conn, course, name, current + sep + text)
+
+
+RESUME_EVERY_S = 60  # an autosave every 2 s must not write the meta row every time
+
+
+def remember_last(conn, course, name: str) -> None:
+    """Note which note the student last opened or edited (Today's "Resume"). Only the four course notes; PA drafts
+    and writes made by the app itself (a quiz adding mistakes) don't count."""
+    if name not in NOTE_FILES:
+        return
+    now = clock.now()
+    last = (get_meta(conn, "last_note") or "").split("|")
+    if len(last) == 3 and last[:2] == [course["code"], name] and (now - datetime.fromisoformat(last[2])).total_seconds() < RESUME_EVERY_S:
+        return
+    with conn:
+        set_meta(conn, "last_note", f"{course['code']}|{name}|{now.isoformat()}")
+
+
+def last_note(conn):
+    """(course code, note name, when) of the last note opened or edited, or None."""
+    last = (get_meta(conn, "last_note") or "").split("|")
+    if len(last) != 3 or last[1] not in NOTE_FILES:
+        return None
+    return last[0], last[1], clock.parse_date(last[2])
 
 
 def migrate_scratch_to_notebook() -> int:

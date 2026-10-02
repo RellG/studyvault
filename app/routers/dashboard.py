@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
-from .. import assessments, cards, catalog, clock, progress, readiness
+from .. import assessments, cards, catalog, clock, notes_fs, progress, readiness, tasks
 from ..db import get_db
 from ..web import render
 
@@ -33,11 +33,19 @@ def upcoming_exams(conn, today):
     return sorted(rows, key=lambda r: r["exam_date"])[:6]
 
 
+def resume(conn):
+    """The note last opened or edited, if it still exists."""
+    last = notes_fs.last_note(conn)
+    c = catalog.get_course(conn, last[0]) if last else None
+    return {"course": c, "name": last[1], "title": notes_fs.NOTE_TITLES[last[1]], "on": last[2]} if c else None
+
+
 @router.get("/")
 def dashboard(request: Request, conn=Depends(get_db)):
     today = clock.today()
     p = progress.load(conn, today)
     program = conn.execute("SELECT * FROM program").fetchone()
     return render(request, "dashboard.html", program=program, p=p, next=next_up(conn, p["term"]),
-                  exams=upcoming_exams(conn, today), due_all=cards.due_count(conn),
+                  exams=upcoming_exams(conn, today), due_all=cards.due_count(conn), resume=resume(conn),
+                  next_tasks=tasks.decorate(tasks.next_tasks(conn, 3), today), tasks_open=tasks.open_count(conn),
                   certs_earned=assessments.certs_earned(conn), grad_target=progress.GRAD_TARGET)

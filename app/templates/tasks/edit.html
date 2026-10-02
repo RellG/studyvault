@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Edit task · studyvault{% endblock %}
+{% block content %}
+{% set back_to = back or ('/courses/' ~ t.code ~ '/tasks' if t.code else '/tasks') %}
+<a href="{{ back_to }}" class="small">← Back to tasks</a>
+<h1>Edit task</h1>
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+<form class="card" method="post" action="/tasks/{{ t.id }}/edit">
+  <input type="hidden" name="back" value="{{ back_to }}">
+  <label for="et-title">Title</label>
+  <input type="text" id="et-title" name="title" required maxlength="200" value="{{ t.title }}">
+  <div class="form-grid">
+    <div><label for="et-course">Course</label>
+      <select id="et-course" name="course_id"><option value="">None</option>
+        {% for c in courses %}<option value="{{ c.id }}" {{ 'selected' if t.course_id|string == c.id|string }}>{{ c.code }} · {{ c.title }}</option>{% endfor %}</select></div>
+    {% if comps %}<div><label for="et-comp">Competency</label>
+      <select id="et-comp" name="competency_id"><option value="">None</option>
+        {% for c in comps %}<option value="{{ c.id }}" {{ 'selected' if t.competency_id|string == c.id|string }}>{{ c.text|truncate(60, True, '…') }}</option>{% endfor %}</select></div>{% endif %}
+    <div><label for="et-status">Status</label>
+      <select id="et-status" name="status">{% for k, label in TASK_STATUSES.items() %}<option value="{{ k }}" {{ 'selected' if t.status == k }}>{{ label }}</option>{% endfor %}</select></div>
+    <div><label for="et-kind">Type</label>
+      <select id="et-kind" name="kind">{% for k, label in TASK_KINDS.items() %}<option value="{{ k }}" {{ 'selected' if t.kind == k }}>{{ label }}</option>{% endfor %}</select></div>
+    <div><label for="et-due">Due</label><input type="date" id="et-due" name="due_on" value="{{ t.due_on or '' }}"></div>
+    <div><label for="et-min">Minutes</label><input type="number" id="et-min" name="est_minutes" min="1" max="1440" value="{{ t.est_minutes or '' }}"></div>
+    <div><label for="et-pri">Priority</label>
+      <select id="et-pri" name="priority">{% for n, label in TASK_PRIORITIES.items() %}<option value="{{ n }}" {{ 'selected' if t.priority|string == n|string }}>{{ label }}</option>{% endfor %}</select></div>
+    <div><label for="et-rule">Counts as done when</label>
+      <select id="et-rule" name="done_rule">{% for k, label in TASK_RULES.items() %}<option value="{{ k }}" {{ 'selected' if t.done_rule == k }}>{{ label }}</option>{% endfor %}</select></div>
+  </div>
+  <label for="et-note">Note or link text <span class="muted small">(optional)</span></label>
+  <input type="text" id="et-note" name="note" maxlength="200" value="{{ t.note or '' }}">
+  {% if t.source and t.source != 'manual' %}<p class="small muted">Added from Ask ({{ t.source }}).</p>{% endif %}
+  <div class="actions"><button class="primary" type="submit">Save</button><a class="button" href="{{ back_to }}">Cancel</a></div>
+</form>
+{% if t.status in ('todo', 'doing', 'blocked') %}
+<form method="post" action="/tasks/{{ t.id }}/cancel" style="margin-top: .8rem">
+  <input type="hidden" name="back" value="{{ back_to }}">
+  <button class="danger" type="submit">Cancel this task</button> <span class="small muted">It moves to “Done and cancelled”; you can reopen it.</span>
+</form>
+{% endif %}
+{% endblock %}

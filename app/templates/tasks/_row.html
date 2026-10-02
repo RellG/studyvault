@@ -1,0 +1,24 @@
+{# one task: needs `t` (from tasks.decorate) and `back` (where its buttons return to) #}
+<li class="task{{ ' is-closed' if t.status in ('done', 'cancelled') }}" id="task-{{ t.id }}">
+  <div class="task-main">
+    <a class="task-title" href="/tasks/{{ t.id }}/edit?back={{ back|urlencode }}">{{ t.title }}</a>
+    <div class="small muted task-meta">
+      {% if t.code and not course %}<a class="badge accent" href="/courses/{{ t.code }}/tasks">{{ t.code }}</a> {% endif %}
+      {{ TASK_KINDS[t.kind] }}{% if t.est_minutes %} · {{ t.est_minutes }} min{% endif %}
+      {% if t.due_label %} · <span class="{{ 'wrong' if t.overdue }}">{{ t.due_label }}</span>{% endif %}
+      {% if t.priority == 1 %} · high priority{% elif t.priority == 3 %} · low priority{% endif %}
+      {% if t.status != 'todo' %}<span class="badge {{ {'doing': 'blue', 'blocked': 'amber', 'done': 'green'}.get(t.status, '') }}">{{ TASK_STATUSES[t.status] }}</span>{% endif %}
+      {% if t.comp_text %}<br>{{ t.comp_text|truncate(70, True, '…') }}{% endif %}
+      {% if t.done_rule != 'manual' and t.status in ('todo', 'doing', 'blocked') %}<br>Done when {{ TASK_RULES[t.done_rule] }}{% endif %}
+    </div>
+    {% if t.evidence_text %}<div class="small correct">{{ t.evidence_text }}</div>{% endif %}
+  </div>
+  <div class="task-actions">
+    {% if t.status in ('todo', 'doing', 'blocked') %}
+    <form method="post" action="/tasks/{{ t.id }}/done"><input type="hidden" name="back" value="{{ back }}"><button class="small primary" type="submit" aria-label="Mark done: {{ t.title }}">Done</button></form>
+    <form method="post" action="/tasks/{{ t.id }}/postpone"><input type="hidden" name="back" value="{{ back }}"><input type="hidden" name="days" value="1"><button class="small" type="submit" aria-label="Postpone to tomorrow: {{ t.title }}">Tomorrow</button></form>
+    {% else %}
+    <form method="post" action="/tasks/{{ t.id }}/reopen"><input type="hidden" name="back" value="{{ back }}"><button class="small" type="submit" aria-label="Reopen: {{ t.title }}">Reopen</button></form>
+    {% endif %}
+  </div>
+</li>

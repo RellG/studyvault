@@ -25,6 +25,7 @@
       {{ item("today", "/", "Today") }}
       {{ item("courses", "/terms", "Courses") }}
       {% call item("review", "/review", "Review") %}{% if due_total %} <span class="badge amber" title="{{ due_total }} due">{{ due_total }}</span>{% endif %}{% endcall %}
+      {{ item("tasks", "/tasks", "Tasks") }}
       {% if ai_enabled %}{{ item("ask", "/ask", "Ask") }}{% endif %}
       {% endblock %}
       <details class="more">

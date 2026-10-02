@@ -1,14 +1,15 @@
-{# Two levels: Notes / Practice / Assessment / Ask are the sections; a section with several pages shows them in a second row.
+{# Two levels: Notes / Practice / Tasks / Assessment / Ask are the sections; a section with several pages shows them in a second row.
    Every page keeps its URL; `tab` (set by each route) says which page is open. #}
 {% set root = "/courses/" ~ course.code %}
-{% set section = "notes" if tab in ("overview", "competencies", "notebook", "mistakes")
-   else ("practice" if tab in ("cards", "quizzes", "ai") else ("assessment" if tab in ("assessment", "pa") else "")) %}
+{% set section = "notes" if tab in ("overview", "competencies", "notebook", "mistakes") else "practice" if tab in ("cards", "quizzes", "ai")
+   else "tasks" if tab == "tasks" else "assessment" if tab in ("assessment", "pa") else "" %}
 {% macro link(href, label, on, exact=True) -%}
 <a href="{{ href }}"{% if on %} class="active" aria-current="{{ 'page' if exact else 'true' }}"{% endif %}>{{ label }}{{ caller() if caller else '' }}</a>
 {%- endmacro %}
 <nav class="tabs" aria-label="Course sections">
   {{ link(root, "Notes", section == "notes", tab == "overview") }}
   {% call link(root ~ "/cards", "Practice", section == "practice", false) %}{% if cards_due %} <span class="badge amber" title="{{ cards_due }} cards due">{{ cards_due }}</span>{% endif %}{% endcall %}
+  {% call link(root ~ "/tasks", "Tasks", section == "tasks") %}{% if tasks_open %} <span class="badge" title="{{ tasks_open }} open">{{ tasks_open }}</span>{% endif %}{% endcall %}
   {{ link(root ~ "/assessment", {'OA': 'OA prep', 'PA': 'PA workspace', 'cert': 'Cert prep'}.get(course.assessment_type, 'Assessment'), section == "assessment", tab == "assessment") }}
   {% if ai_enabled %}<a href="/ask?course={{ course.code }}">Ask</a>{% endif %}
 </nav>

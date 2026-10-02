@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} tasks · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% set back = "/courses/" ~ course.code ~ "/tasks" %}
+<h2 style="margin-top: 0">Tasks for {{ course.code }}</h2>
+{% include "tasks/_lists.html" %}
+<div style="margin-top: 1.2rem">{% include "tasks/_form.html" %}</div>
+<p class="small"><a href="/tasks">All tasks</a></p>
+{% endblock %}

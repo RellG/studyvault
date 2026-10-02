@@ -10,6 +10,28 @@
 <div class="banner red" role="alert"><strong>SAP below 67%:</strong> if the term ended today you'd have passed {{ (p.sap.ratio * 100)|round|int }}% of attempted CU ({{ p.sap.passed }} of {{ p.sap.attempted }}; courses count as attempted once started). Below 67% puts financial aid eligibility at risk. Finish what's in progress before adding more, and talk to your mentor if it stays red.</div>
 {% endif %}
 
+{# the immediate work first: where you left off, the cards due, and the next few tasks #}
+<section class="card do-next" aria-labelledby="do-next">
+  <h2 id="do-next">Do next</h2>
+  <ul class="plain tasks">
+    {% if resume %}
+    <li class="task">
+      <div class="task-main"><strong>Resume</strong> · <a class="task-title" href="/courses/{{ resume.course.code }}/notes/{{ resume.name }}">{{ resume.course.code }} {{ resume.title }}</a>
+        <div class="small muted">last opened {{ resume.on|date("%b %-d") }}</div></div>
+      <div class="task-actions"><a class="button small" href="/courses/{{ resume.course.code }}/notes/{{ resume.name }}">Open</a></div>
+    </li>
+    {% endif %}
+    <li class="task">
+      <div class="task-main"><strong>Cards</strong> · {% if due_all %}{{ due_all }} due today{% else %}<span class="correct">none due</span>{% endif %}</div>
+      {% if due_all %}<div class="task-actions"><a class="button small primary" href="/review">Review {{ due_all }}</a></div>{% endif %}
+    </li>
+    {% set back = "/" %}
+    {% for t in next_tasks %}{% include "tasks/_row.html" %}{% endfor %}
+  </ul>
+  {% if not next_tasks %}<p class="small muted" style="margin: 0 0 .4rem">No open tasks. <a href="/tasks">Add one</a>{% if ai_enabled %} or <a href="/ask">ask for a plan</a>{% endif %}.</p>{% endif %}
+  <p class="small" style="margin: .4rem 0 0"><a href="/tasks">All tasks{% if tasks_open %} ({{ tasks_open }} open){% endif %}</a></p>
+</section>
+
 <section class="grid dash">
   {# ---- current term ---- #}
   {% set pace = p.pace %}
@@ -72,17 +94,15 @@
     {% endif %}
   </div>
 
-  {# ---- flashcards + exams ---- #}
+  {# ---- exams ---- #}
   <div class="card">
-    <h2>Cards and exams</h2>
-    <p>{% if due_all %}<a class="button primary small" href="/review">Review {{ due_all }} due card{{ '' if due_all == 1 else 's' }}</a>{% else %}<span class="correct">✓ No cards due</span>{% endif %}</p>
+    <h2>Exams coming up</h2>
     {% if exams %}
-    <h3>Exams coming up</h3>
     <ul class="plain">{% for e in exams %}
       <li><strong>{{ 'today' if e.days == 0 else ('in ' ~ e.days ~ ' day' ~ ('' if e.days == 1 else 's')) }}</strong> ·
         {% if e.code %}<a href="/courses/{{ e.code }}/assessment">{{ e.code }}</a> {% endif %}{{ e.title }} <span class="small muted">{{ e.exam_date|date("%b %-d") }}</span></li>
     {% endfor %}</ul>
-    {% endif %}
+    {% else %}<p class="small muted">None scheduled.</p>{% endif %}
   </div>
 
   <a class="card tile" href="/certs">

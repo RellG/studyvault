@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import cards, catalog, clock, markdown, notes_fs, readiness
+from .. import cards, catalog, clock, markdown, notes_fs, readiness, tasks
 from .. import competencies as comp
 from ..config import settings
 from ..db import get_db
@@ -41,7 +41,7 @@ def course_context(conn, course) -> dict:
     """Shared context for every course tab."""
     return {"course": course, "pa_files": notes_fs.list_pa_files(course),
             "weakest": comp.weakest(conn, course["id"]), "anchor": comp.anchor,
-            "cards_due": cards.due_count(conn, course["id"])}
+            "cards_due": cards.due_count(conn, course["id"]), "tasks_open": tasks.open_count(conn, course["id"])}
 
 
 @router.get("/courses/{code}")
@@ -64,6 +64,7 @@ def note_page(request: Request, code: str, name: str, mode: str = "view", conn=D
         raise HTTPException(404)
     notes_fs.ensure_course_files(conn, c)
     text, ver = notes_fs.read_note(c, name)
+    notes_fs.remember_last(conn, c, name)
     tab = name if name in notes_fs.NOTE_FILES else "pa"
     return render(request, "courses/note.html", **course_context(conn, c), tab=tab, name=name, note_mode=mode,
                   text=text, version=ver, html=render_md(conn, text) if mode != "edit" else "",
@@ -83,6 +84,7 @@ async def note_save(request: Request, code: str, name: str, conn=Depends(get_db)
         raise HTTPException(404)
     except notes_fs.NoteConflict as e:
         return JSONResponse({"error": "changed elsewhere", "version": str(e)}, status_code=409)
+    notes_fs.remember_last(conn, c, name)
     return {"version": ver, "saved_at": clock.now().strftime("%H:%M:%S")}
 
 

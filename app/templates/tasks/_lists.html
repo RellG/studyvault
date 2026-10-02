@@ -1,0 +1,22 @@
+{# open tasks in three groups, then the finished ones; needs due_now, later, someday, closed, back #}
+{% if due_now %}
+<h2>Due now <span class="badge amber">{{ due_now|length }}</span></h2>
+<ul class="plain tasks">{% for t in due_now %}{% include "tasks/_row.html" %}{% endfor %}</ul>
+{% endif %}
+{% if later %}
+<h2>Coming up</h2>
+<ul class="plain tasks">{% for t in later %}{% include "tasks/_row.html" %}{% endfor %}</ul>
+{% endif %}
+{% if someday %}
+<h2>No date</h2>
+<ul class="plain tasks">{% for t in someday %}{% include "tasks/_row.html" %}{% endfor %}</ul>
+{% endif %}
+{% if not (due_now or later or someday) %}
+<p class="muted">Nothing open. Add a task below{% if ai_enabled %}, or ask <a href="/ask{{ '?course=' ~ course.code if course }}">Ask</a> to plan some{% endif %}.</p>
+{% endif %}
+{% if closed %}
+<details class="closed-tasks">
+  <summary>Done and cancelled ({{ closed|length }})</summary>
+  <ul class="plain tasks">{% for t in closed %}{% include "tasks/_row.html" %}{% endfor %}</ul>
+</details>
+{% endif %}
