@@ -423,3 +423,4 @@ a.task-title:hover { text-decoration: underline; }
 }
 .add-task > summary::before, .closed-tasks > summary::before { content: "+"; width: 1.2rem; font-size: 1.3rem; font-weight: 500; line-height: 1; }
 .add-task[open] > summary::before, .closed-tasks[open] > summary::before { content: "\2212"; }
+.do-next { margin-bottom: .8rem; }
