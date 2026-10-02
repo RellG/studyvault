@@ -1,5 +1,6 @@
 """Flashcards: bulk-import syntax, storage, and the review loop."""
 import re
+from datetime import datetime
 
 from . import clock, notes_fs, srs
 
@@ -8,6 +9,7 @@ Q_RE = re.compile(r"^\s*Q:\s*(.*)$", re.I)
 A_RE = re.compile(r"^\s*A:\s*(.*)$", re.I)
 CLOZE_RE = re.compile(r"\{\{c(\d+)::(.+?)(?:::(.+?))?\}\}")
 LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+REGRADE_GUARD_S = 5  # a second grade for the same card within this many seconds is a double tap
 
 
 def _cloze_cards(line: str) -> list[dict]:
@@ -169,7 +171,11 @@ def grade(conn, card_id: int, g: int) -> srs.State:
     card = conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
     if not card:
         raise KeyError(card_id)
-    new = srs.review(srs.State(card["ease"], card["interval"], card["reps"]), g)
+    state = srs.State(card["ease"], card["interval"], card["reps"])
+    new = srs.review(state, g)  # validates the grade first
+    last = conn.execute("SELECT reviewed_at FROM reviews WHERE card_id = ? ORDER BY id DESC LIMIT 1", (card_id,)).fetchone()
+    if last and (clock.now() - datetime.fromisoformat(last[0])).total_seconds() < REGRADE_GUARD_S:
+        return state  # a double tap or a resent form, not a second review: count it once
     with conn:
         conn.execute("UPDATE cards SET ease = ?, interval = ?, reps = ?, due_on = ? WHERE id = ?",
                      (new.ease, new.interval, new.reps, srs.due_on(new, clock.today()).isoformat(), card_id))

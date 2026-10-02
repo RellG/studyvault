@@ -125,3 +125,16 @@ def test_short_answer_self_grading(seeded, course):
     quizzes.self_grade(seeded, aid, {short["id"]: True})
     row = seeded.execute("SELECT score, finished_at FROM quiz_attempts WHERE id = ?", (aid,)).fetchone()
     assert row["finished_at"] and row["score"] == 1  # only the short one was answered
+
+
+def test_resent_self_grade_appends_misses_once(seeded, course):
+    make_bank(seeded, course)
+    aid = quizzes.start(seeded, course["id"], 12, shuffle=True, rng=random.Random(7))
+    attempt = seeded.execute("SELECT * FROM quiz_attempts WHERE id = ?", (aid,)).fetchone()
+    short = next(q for q in quizzes.attempt_questions(seeded, attempt) if q["kind"] == "short")
+    quizzes.submit(seeded, aid, {short["id"]: ["no idea"]})
+    quizzes.self_grade(seeded, aid, {short["id"]: False})
+    once, _ = notes_fs.read_note(course, "mistakes")
+    assert "Quiz #" in once
+    quizzes.self_grade(seeded, aid, {short["id"]: False})  # the same form sent again (double tap, Back + resend)
+    assert notes_fs.read_note(course, "mistakes")[0] == once

@@ -106,3 +106,12 @@ def test_card_pages(client):
     assert "Review" in client.get("/").text
     assert client.post(f"/cards/{cid}/delete", follow_redirects=False).status_code == 303
     assert client.get(f"/cards/{cid}/edit").status_code == 404
+
+
+def test_double_tap_grade_counts_once(seeded, d413):
+    cid = cards.add(seeded, d413["id"], "front", "back")
+    cards.grade(seeded, cid, 3)
+    cards.grade(seeded, cid, 3)  # the same press arriving twice
+    assert seeded.execute("SELECT COUNT(*) FROM reviews WHERE card_id = ?", (cid,)).fetchone()[0] == 1
+    with pytest.raises(ValueError):
+        cards.grade(seeded, cid, 9)  # a bad grade is still refused, guard or not

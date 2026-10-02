@@ -150,9 +150,10 @@ def finish(conn, attempt_id: int) -> None:
     rows = conn.execute("SELECT * FROM quiz_answers WHERE attempt_id = ?", (attempt_id,)).fetchall()
     score = sum(1 for r in rows if r["correct"])
     with conn:
-        conn.execute("UPDATE quiz_attempts SET score = ?, finished_at = ? WHERE id = ?",
-                     (score, clock.now().isoformat(), attempt_id))
-    append_mistakes(conn, attempt, rows)
+        claimed = conn.execute("UPDATE quiz_attempts SET score = ?, finished_at = ? WHERE id = ? AND finished_at IS NULL",
+                               (score, clock.now().isoformat(), attempt_id)).rowcount
+    if claimed:  # a resent self-grade form finishes nothing twice, so the misses land in Mistakes once
+        append_mistakes(conn, attempt, rows)
 
 
 def append_mistakes(conn, attempt, answer_rows) -> int:

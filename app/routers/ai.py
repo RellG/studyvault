@@ -2,6 +2,7 @@
 Everything generated is a draft: nothing is saved until the user accepts it, and only the rows they keep."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import ai, ai_actions, assessments, cards, clock, competencies as comp, markdown, notes_fs, quizzes
 from ..db import get_db
@@ -58,15 +59,17 @@ async def ai_run(request: Request, code: str, conn=Depends(get_db)):
     except ValueError:
         count = 0
     fill, course, note = bool(form.get("fill")), f"{c['code']} {c['title']}", None
+    # The provider call can take minutes; run it in a worker thread so the one-process app (autosave, other
+    # tabs, the phone) keeps answering meanwhile.
     try:
         if action == "cards":
-            result, note = ai_actions.flashcards(text, count, fill, course)
+            result, note = await run_in_threadpool(ai_actions.flashcards, text, count, fill, course)
         elif action == "questions":
-            result, note = ai_actions.questions(text, count, fill, course)
+            result, note = await run_in_threadpool(ai_actions.questions, text, count, fill, course)
         elif action == "explain":
-            result = ai_actions.explain(text)
+            result = await run_in_threadpool(ai_actions.explain, text)
         else:
-            result = ai_actions.gap_check(competency, text)
+            result = await run_in_threadpool(ai_actions.gap_check, competency, text)
     except ai.AIError as e:
         return _page(request, conn, c, text=text, section=form.get("section", ""), error=str(e), status_code=502,
                      count=count, fill=fill)

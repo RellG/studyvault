@@ -4,7 +4,7 @@
 #   2. git-commit the notes repo, then archive it (history included)
 #   3. archive attachments
 #   4. keep the newest 14 snapshots in $BACKUP_LOCAL (default ~/studyvault/backups)
-#   5. rsync the snapshots to $BACKUP_TARGET (from .env) if set: that's the off-device copy
+#   5. copy the new snapshot to $BACKUP_TARGET (from .env, host:path or a mounted dir) and verify it there
 # Exit code is non-zero if anything failed; the last result is in backups/LAST_RESULT.
 set -euo pipefail
 
@@ -62,11 +62,25 @@ if (( ${#snaps[@]} > KEEP )); then
   for old in "${snaps[@]:0:${#snaps[@]}-KEEP}"; do rm -rf "$old"; log "pruned $(basename "$old")"; done
 fi
 
-# 5. off-device copy
+# 5. off-device copy: push this snapshot over ssh (tar, so the target needs no rsync) and verify it there.
+#    Push-only: nothing on the target is ever deleted, so a damaged local backups/ can't wipe the off-device copies.
 if [[ -n "$TARGET" ]]; then
-  rsync -a --delete --exclude '*.partial' "$DEST/" "$TARGET/"
-  log "synced to $TARGET"
-  echo "OK $STAMP -> $TARGET" > "$DEST/LAST_RESULT"
+  trap - ERR; set +e +o pipefail
+  host="${TARGET%%:*}"; dir="${TARGET#*:}"
+  if [[ "$host" == "$TARGET" ]]; then  # a mounted drive, not host:path
+    mkdir -p "$TARGET" && cp -a "$SNAP" "$TARGET/" && ( cd "$TARGET/$STAMP" && sha256sum -c --quiet SHA256SUMS ); rc=$?
+  else
+    set -o pipefail; tar -C "$DEST" -cf - "$STAMP" | ssh -o BatchMode=yes -o ConnectTimeout=20 "$host" \
+      "mkdir -p '$dir' && tar -C '$dir' -xf - && cd '$dir/$STAMP' && sha256sum -c --quiet SHA256SUMS"; rc=$?
+  fi
+  if (( rc == 0 )); then
+    log "copied to $TARGET and verified"
+    echo "OK $STAMP -> $TARGET (verified)" > "$DEST/LAST_RESULT"
+  else
+    log "FAILED: off-device copy to $TARGET (local snapshot $STAMP is fine)"
+    echo "FAILED $STAMP: off-device copy to $TARGET failed; local snapshot OK" > "$DEST/LAST_RESULT"
+    exit 1
+  fi
 else
   log "WARNING: BACKUP_TARGET is empty; snapshot is only on this SD card"
   echo "OK $STAMP (local only: set BACKUP_TARGET in .env)" > "$DEST/LAST_RESULT"

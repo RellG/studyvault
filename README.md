@@ -23,7 +23,7 @@ It was built for the B.S. Cloud & Network Engineering – AWS program, but the c
 | **Themes** | Notebook (default; Google Sans, soft blue panels, pill buttons), Sage and Paper, each with light and dark, plus System / Light / Dark; chosen in Settings and stored server-side so every device matches |
 | **Search** | SQLite FTS5 across notes, flashcards and questions, filterable by term and course |
 | **AI assist (optional)** | Notes → flashcards, notes → practice questions, explain differently, gap check. Anthropic or Google via env config; everything comes back as a draft you accept or discard; only the text you select is sent; never used to write performance assessments |
-| **Backup & export** | Nightly SQLite backup + notes/attachments archives with checksums, 14 kept, rsync off-device; tested restore script; course export to one markdown file or a print-to-PDF page |
+| **Backup & export** | Nightly SQLite backup + notes/attachments archives with checksums, 14 kept locally, each copied off-device over ssh and verified; tested restore script; course export to one markdown file or a print-to-PDF page |
 
 ## Run it
 
@@ -56,7 +56,7 @@ Open `http://<STUDYVAULT_LAN_IP>:8420` and log in with your password. The seed r
 | `STUDYVAULT_TZ` | Your timezone, e.g. `America/New_York` |
 | `AI_PROVIDER`, `AI_MODEL`, `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` | Leave empty to hide AI features. No model name is hardcoded |
 | `AI_MAX_OUTPUT_TOKENS` | Output cap per AI request (default 2048) |
-| `BACKUP_TARGET` | rsync destination for nightly backups (`user@host:path` or a mounted drive) |
+| `BACKUP_TARGET` | Off-device copy of each nightly snapshot (`host:path` over ssh with key auth, or a mounted drive) |
 
 ## Backups
 

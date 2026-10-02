@@ -219,3 +219,21 @@ def test_ai_flow_drafts_then_accept(client, monkeypatch, mock_api):
     r = client.post("/courses/D413/ai/run", data={"action": "cards", "text": "x"})
     assert r.status_code == 502 and "busy" in r.text and "Nothing was saved" in r.text
     conn.close()
+
+
+def test_ai_call_runs_off_the_event_loop(client, monkeypatch):
+    """A slow provider call must not freeze the one-process app (autosave, other tabs) while it runs."""
+    import asyncio
+    use(monkeypatch)
+    seen = []
+
+    def fake(*args):
+        try:
+            asyncio.get_running_loop()
+            seen.append("event loop")
+        except RuntimeError:
+            seen.append("worker thread")
+        return [{"front": "a", "back": "b"}], None
+    monkeypatch.setattr(ai_actions, "flashcards", fake)
+    assert client.post("/courses/D413/ai/run", data={"action": "cards", "text": "x"}).status_code == 200
+    assert seen == ["worker thread"]

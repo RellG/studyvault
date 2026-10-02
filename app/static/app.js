@@ -23,3 +23,17 @@
   tick();
   setInterval(tick, 1000);
 })();
+
+// Double-submit guard: a second press (or a double tap on a phone) while a form is already on its way is
+// ignored, so Accept, Apply, Grade and Finish happen once. Forms that handle submit themselves are skipped,
+// as are forms marked data-resubmit. Coming back with the Back button re-arms them.
+document.addEventListener("submit", function (e) {
+  var f = e.target;
+  if (e.defaultPrevented || f.hasAttribute("data-resubmit") || (f.method || "").toLowerCase() !== "post") return;
+  if (f.dataset.sent) { e.preventDefault(); return; }
+  f.dataset.sent = "1";
+  f.setAttribute("aria-busy", "true");
+});
+window.addEventListener("pageshow", function () {
+  document.querySelectorAll("form[data-sent]").forEach(function (f) { delete f.dataset.sent; f.removeAttribute("aria-busy"); });
+});

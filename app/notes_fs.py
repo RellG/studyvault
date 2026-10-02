@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -133,15 +134,22 @@ def _template(course, name: str) -> str:
     return ""
 
 
+# Every write to a note file holds this lock, so a version check and its write (or an append's read and write)
+# happen as one step: an autosave and a quiz appending mistakes can't overwrite each other. Reentrant because
+# append_note calls write_note. The app runs as one process (uvicorn --workers 1), so a thread lock is enough.
+_write_lock = threading.RLock()
+
+
 def ensure_course_files(conn, course) -> None:
     d = course_dir(course)
     created = False
     for name in NOTE_FILES:
         p = d / f"{name}.md"
-        if not p.exists():
-            _atomic_write(p, _template(course, name))
-            index_file(conn, course, name)
-            created = True
+        with _write_lock:
+            if not p.exists():
+                _atomic_write(p, _template(course, name))
+                index_file(conn, course, name)
+                created = True
     if course["assessment_type"] == "PA":
         (d / "pa").mkdir(parents=True, exist_ok=True)
     if created:
@@ -156,35 +164,41 @@ def read_note(course, name: str) -> tuple[str, str]:
 
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")  # unique per write
+    try:
+        with open(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def write_note(conn, course, name: str, text: str, base_version: str | None = None) -> str:
     """Save a note. If base_version is given and the file changed since, raise NoteConflict."""
     name = check_name(name)
     p = note_path(course, name)
-    if base_version is not None and p.exists():
-        current = version(p.read_text(encoding="utf-8"))
-        if current != base_version:
-            raise NoteConflict(current)
     text = text.replace("\r\n", "\n")
-    _atomic_write(p, text)
-    index_file(conn, course, name)
+    with _write_lock:
+        if base_version is not None and p.exists():
+            current = version(p.read_text(encoding="utf-8"))
+            if current != base_version:
+                raise NoteConflict(current)
+        _atomic_write(p, text)
+        index_file(conn, course, name)
     mark_dirty(course["code"], f"{name}.md")
     return version(text)
 
 
 def append_note(conn, course, name: str, text: str) -> str:
-    current, _ = read_note(course, name)
-    if not current:
-        current = _template(course, check_name(name))
-    sep = "" if current.endswith("\n\n") else ("\n" if current.endswith("\n") else "\n\n")
-    return write_note(conn, course, name, current + sep + text)
+    with _write_lock:
+        current, _ = read_note(course, name)
+        if not current:
+            current = _template(course, check_name(name))
+        sep = "" if current.endswith("\n\n") else ("\n" if current.endswith("\n") else "\n\n")
+        return write_note(conn, course, name, current + sep + text)
 
 
 def migrate_scratch_to_notebook() -> int:
@@ -255,6 +269,11 @@ def reindex_all(conn) -> int:
 
 def move_course(conn, old, new) -> None:
     """Course changed term or title: move its folder, fix the index, commit the rename."""
+    with _write_lock:
+        _move(conn, old, new)
+
+
+def _move(conn, old, new) -> None:
     old_rel, new_rel = course_rel_dir(old), course_rel_dir(new)
     src, dst = settings.notes_dir / old_rel, settings.notes_dir / new_rel
     if old_rel == new_rel or not src.exists():

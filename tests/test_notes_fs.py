@@ -158,3 +158,29 @@ def test_old_scratch_url_redirects(client):
     assert r.status_code == 301 and r.headers["location"] == "/courses/D413/notes/notebook?mode=edit"
     page = client.get("/courses/D413").text
     assert ">Notebook</a>" in page and ">Scratch</a>" not in page
+
+
+def test_concurrent_writers_lose_nothing(seeded, d413):
+    """Quiz misses, AI 'save to notebook' and autosaves run on different threads; each append must survive."""
+    import threading
+    from app import db
+
+    def append(i):
+        c = db.connect(settings.db_path)
+        try:
+            notes_fs.append_note(c, d413, "mistakes", f"### miss {i}\n")
+        finally:
+            c.close()
+    threads = [threading.Thread(target=append, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    text, _ = notes_fs.read_note(d413, "mistakes")
+    assert all(f"### miss {i}\n" in text for i in range(20))
+    assert not list(notes_fs.course_dir(d413).glob(".*.tmp"))  # no temp files left behind
+
+
+def test_editor_keeps_a_local_draft(client):
+    page = client.get("/courses/D413/notes/notebook?mode=edit").text
+    assert 'id="draft-bar"' in page and "sv-draft:" in page and 'id="done"' in page

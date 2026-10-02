@@ -18,13 +18,22 @@
     {% if note_mode == "edit" %}
       <span id="save-state" class="save-state" aria-live="polite">Saved</span>
       <button type="button" class="small" id="save-now">Save now</button>
-      <a class="button small primary" href="?">Done</a>
+      <a class="button small primary" href="?" id="done">Done</a>
     {% else %}
       <a class="button small primary write" href="?mode=edit" title="Write in this note">{% include "_pencil.html" %} Write</a>
     {% endif %}
   </div>
 </div>
 {% if note_mode == "edit" %}
+<div id="draft-bar" class="banner amber" role="alert" hidden>
+  <span id="draft-msg"></span>
+  <div class="row" style="margin-top: .5rem">
+    <button type="button" class="small" id="draft-download">Download my version</button>
+    <button type="button" class="small" id="draft-restore" hidden>Replace the latest with my version</button>
+    <button type="button" class="small" id="draft-reload" hidden>Open the latest version</button>
+    <button type="button" class="small link" id="draft-discard" hidden>Discard my version</button>
+  </div>
+</div>
 <div class="editor-wrap" style="margin-top: .6rem">
   <textarea id="note-text">{{ text }}</textarea>
 </div>
@@ -77,6 +86,52 @@
     }
   });
 
+  // Local draft: every edit is also kept in this browser until StudyVault confirms it saved, so a dropped
+  // connection, a closed tab or a conflict never loses typing. Server versions stay the source of truth.
+  var key = "sv-draft:" + url, keepTimer = null, leaving = false, goAfterSave = null, pending = "";
+  function readDraft() { try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { return null; } }
+  function keepDraft() { try { localStorage.setItem(key, JSON.stringify({ text: mde.value(), base: base, at: Date.now() })); } catch (e) {} }
+  function dropDraft() { try { localStorage.removeItem(key); } catch (e) {} }
+  function when(ms) { return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+
+  var bar = document.getElementById("draft-bar");
+  function showBar(msg, opts) {
+    document.getElementById("draft-msg").textContent = msg;
+    document.getElementById("draft-restore").hidden = !opts.restore;
+    document.getElementById("draft-reload").hidden = !opts.reload;
+    document.getElementById("draft-discard").hidden = !opts.discard;
+    bar.hidden = false;
+  }
+  document.getElementById("draft-download").addEventListener("click", function () {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([pending || mde.value()], { type: "text/markdown" }));
+    a.download = "{{ course.code }}-{{ name|replace('/', '-') }}-my-version.md";
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+  document.getElementById("draft-restore").addEventListener("click", function () {
+    mde.value(pending); pending = ""; bar.hidden = true;  // the change handler marks it unsaved and saves it
+  });
+  document.getElementById("draft-discard").addEventListener("click", function () {
+    pending = ""; dropDraft(); bar.hidden = true;
+  });
+  document.getElementById("draft-reload").addEventListener("click", function () { leaving = true; location.reload(); });
+
+  var draft = readDraft();
+  if (draft && draft.text !== mde.value()) {
+    if (draft.base === base) {  // nothing changed on the server since: it's simply newer than what's saved
+      mde.value(draft.text);  // before the change handler exists, so mark it unsaved and send it here
+      dirty = true; timer = setTimeout(save, 1000);
+      setState("Restored your unsaved edit from " + when(draft.at));
+    } else {
+      pending = draft.text;
+      showBar("You have a version of this note from " + when(draft.at) + " that never reached StudyVault, and the note " +
+              "has changed since (another device, or a quiz added a mistake). The editor shows the latest saved note.",
+              { restore: true, discard: true });
+    }
+  } else if (draft) {
+    dropDraft();
+  }
+
   function save() {
     if (conflict) return;
     if (saving) { again = true; return; }
@@ -89,12 +144,23 @@
       body: JSON.stringify({ content: content, base: base }),
       keepalive: content.length < 60000
     }).then(function (r) {
-      if (r.status === 409) { conflict = true; setState("Changed elsewhere (e.g. a quiz added a mistake). Copy your edit, then reload.", true); return; }
-      if (r.status === 401) { dirty = true; setState("Logged out. Log in in another tab, then press Save now.", true); return; }
+      if (r.status === 409) {
+        conflict = true; dirty = true; goAfterSave = null; keepDraft();
+        setState("Not saved: changed elsewhere", true);
+        showBar("This note changed somewhere else (another device, or a quiz added a mistake) after you started. " +
+                "Your version is kept on this device: download it, or open the latest and choose what to keep.", { reload: true });
+        return;
+      }
+      if (r.status === 401) { dirty = true; goAfterSave = null; setState("Logged out. Log in in another tab, then press Save now.", true); return; }
       if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json().then(function (j) { base = j.version; setState(dirty ? "Unsaved" : "Saved " + j.saved_at); });
+      return r.json().then(function (j) {
+        base = j.version;
+        if (dirty) { keepDraft(); setState("Unsaved"); return; }
+        dropDraft(); setState("Saved " + j.saved_at);
+        if (goAfterSave && !again) { leaving = true; location.href = goAfterSave; }
+      });
     }).catch(function () {
-      dirty = true; setState("Not saved (offline?). Retrying…", true);
+      dirty = true; goAfterSave = null; setState("Not saved (offline?). Kept on this device; retrying…", true);
       clearTimeout(timer); timer = setTimeout(save, 5000);
     }).finally(function () {
       saving = false;
@@ -104,14 +170,24 @@
 
   mde.codemirror.on("change", function () {
     dirty = true; if (!conflict) setState("Unsaved");
+    clearTimeout(keepTimer); keepTimer = setTimeout(keepDraft, 400);
     clearTimeout(timer); timer = setTimeout(save, 2000);
   });
   document.getElementById("save-now").addEventListener("click", function () { clearTimeout(timer); save(); });
   document.addEventListener("keydown", function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); clearTimeout(timer); save(); }
   });
+  // Done leaves only once the last edit is confirmed saved.
+  document.getElementById("done").addEventListener("click", function (e) {
+    if (conflict) { e.preventDefault(); bar.hidden = false; bar.scrollIntoView({ block: "nearest" }); return; }
+    if (dirty || saving) { e.preventDefault(); goAfterSave = this.href; clearTimeout(timer); save(); }
+  });
   window.addEventListener("beforeunload", function (e) {
-    if (dirty || saving) { save(); e.preventDefault(); e.returnValue = ""; }
+    if (leaving) return;
+    if (dirty || saving || conflict) {
+      if (dirty && !conflict) { keepDraft(); save(); }
+      e.preventDefault(); e.returnValue = "";
+    }
   });
 })();
 </script>
