@@ -10,6 +10,7 @@ import logging
 import re
 
 from . import ai, assessments, cards, catalog, clock, competencies as comp, notes_fs, progress, quizzes, readiness
+from . import tasks as study_tasks
 from .config import settings
 
 log = logging.getLogger("studyvault.agent")
@@ -21,6 +22,7 @@ NOTE_CHARS = 8000         # read_note / get_mistakes get more room
 HISTORY_MESSAGES = 20     # earlier messages resent each turn (final text only, not their lookups)
 MAX_MESSAGE_CHARS = 12000  # room for a pasted list of pre-assessment topics
 MAX_CARDS = 40            # per add_flashcards call; a longer list takes several calls
+MAX_TASKS = 12            # per propose_tasks call
 MEMORY_TEXT = 300         # one memory
 MEMORY_CHARS = 4000       # all memories sent with each request; the newest win if there are more
 READABLE_NOTES = ["overview", "competencies", "notebook", "mistakes"]
@@ -262,6 +264,27 @@ def list_certs(ctx):
                       for r in assessments.list_certs(ctx.conn)] or "None yet."}
 
 
+@tool("list_tasks", "read", "tasks",
+      "The student's study tasks (their plan): id, course, title, type, status, due date, minutes, priority, and how it "
+      "gets done (done_rule: manual, cards_reviewed or quiz_finished). A finished task shows its evidence. Defaults to "
+      "open tasks; optionally one course and/or a status.",
+      {"code": CODE, "status": {"type": "string", "enum": ["open", "all", *study_tasks.STATUSES],
+                                "description": "open (default), all, or one status"}})
+def list_tasks(ctx, code=None, status="open"):
+    conn = ctx.conn
+    c = _course(conn, code) if code else None
+    status = str(status or "open")
+    if status not in ("open", "all", *study_tasks.STATUSES):
+        raise ToolError("status must be open, all, todo, doing, blocked, done or cancelled.")
+    statuses = study_tasks.OPEN if status == "open" else None if status == "all" else (status,)
+    rows = study_tasks.decorate(study_tasks.list_tasks(conn, c["id"] if c else None, statuses, limit=40))
+    if not rows:
+        return {"tasks": [], "note": "No tasks."}
+    return {"tasks": [{**_pick(t, "id", "title", "kind", "status", "due_on", "est_minutes", "priority", "done_rule"),
+                       "course": t["code"], "when": t["due_label"] or None, "evidence": t["evidence_text"] or None}
+                      for t in rows]}
+
+
 # ---------------------------------------------------------------- write tools: proposals only
 
 PROPOSED = "Shown to the student as a card with an Apply button. Nothing is saved unless they press Apply."
@@ -420,6 +443,94 @@ def log_study_time(ctx, date, minutes, code=None):
                     f"{m} min of study{' on ' + c['code'] if c else ''} on {d.isoformat()}")
 
 
+def _future_date(value, field="due_on"):
+    d = clock.parse_date(str(value)) if value else None
+    if value and not d:
+        raise ToolError(f"{field} must be YYYY-MM-DD.")
+    if d and d < clock.today():
+        raise ToolError(f"{field} is in the past (today is {clock.today().isoformat()}).")
+    return d.isoformat() if d else None
+
+
+@tool("propose_tasks", "write", "proposed tasks",
+      "Propose study tasks for the student's plan (they edit and Apply them). Small and concrete: one sitting each, "
+      "with a due date and minutes where you can. done_rule: manual (default; only the student marks it done), "
+      "cards_reviewed (the app closes it once the student has cleared that course's due cards) or quiz_finished (the "
+      f"app closes it when they finish a quiz). Up to {MAX_TASKS} per call.",
+      {"tasks": {"type": "array", "description": f"Up to {MAX_TASKS} tasks", "items": {"type": "object", "properties": {
+          "title": {"type": "string"}, "code": CODE, "competency_id": COMP,
+          "kind": {"type": "string", "enum": list(study_tasks.KINDS)},
+          "due_on": {"type": "string", "description": "YYYY-MM-DD, today or later"},
+          "est_minutes": {"type": "integer"}, "priority": {"type": "integer", "description": "1 high, 2 normal, 3 low"},
+          "done_rule": {"type": "string", "enum": list(study_tasks.RULES)},
+          "note": {"type": "string", "description": "A note name or short pointer (optional)"}},
+          "required": ["title"]}}},
+      ["tasks"])
+def propose_tasks(ctx, tasks):
+    conn, items = ctx.conn, []
+    for x in (tasks if isinstance(tasks, list) else [])[:MAX_TASKS]:
+        if not isinstance(x, dict) or not str(x.get("title") or "").strip():
+            continue
+        c = _course(conn, x["code"]) if x.get("code") else None
+        try:
+            v = study_tasks.check(conn, x["title"], course_id=c["id"] if c else None,
+                                  competency_id=_comp_id(conn, c, x.get("competency_id")) if c else None,
+                                  note=x.get("note"), kind=x.get("kind") or "study", due_on=_future_date(x.get("due_on")),
+                                  est_minutes=x.get("est_minutes"), priority=x.get("priority") or 2,
+                                  done_rule=x.get("done_rule") or "manual")
+        except study_tasks.TaskError as e:
+            raise ToolError(f"“{str(x['title'])[:40]}”: {e}")
+        items.append({**v, "code": c["code"] if c else None})
+    if not items:
+        raise ToolError("No usable tasks: each needs a title.")
+    courses = {i["course_id"] for i in items}
+    one = conn.execute("SELECT * FROM courses WHERE id = ?", (courses.pop(),)).fetchone() if len(courses) == 1 and None not in courses else None
+    return _propose(ctx, "tasks", one, {"tasks": items}, f"{len(items)} study task{'s' * (len(items) != 1)}")
+
+
+@tool("propose_task_update", "write", "proposed task change",
+      "Propose changing one open study task: its status, due date, priority or title (get the id from list_tasks). "
+      "You can't mark a task done if its done_rule is cards_reviewed or quiz_finished: the app closes those from the "
+      "student's real reviews and quizzes. Only propose done for a manual task when the student says they finished it.",
+      {"task_id": {"type": "integer", "description": "From list_tasks"},
+       "status": {"type": "string", "enum": list(study_tasks.STATUSES)},
+       "due_on": {"type": "string", "description": "YYYY-MM-DD, today or later"},
+       "priority": {"type": "integer", "description": "1 high, 2 normal, 3 low"}, "title": {"type": "string"}},
+      ["task_id"])
+def propose_task_update(ctx, task_id, status=None, due_on=None, priority=None, title=None):
+    conn = ctx.conn
+    try:
+        t = study_tasks.get(conn, int(task_id))
+    except (TypeError, ValueError):
+        raise ToolError("task_id must be a number from list_tasks.")
+    if not t:
+        raise ToolError(f"No task {task_id}. Call list_tasks for the ids.")
+    if t["status"] not in study_tasks.OPEN:
+        raise ToolError(f"Task {t['id']} is already {t['status']}; it can't be changed from here.")
+    changes = {}
+    if status is not None:
+        if status not in study_tasks.STATUSES:
+            raise ToolError("status must be todo, doing, blocked, done or cancelled.")
+        if status == "done" and t["done_rule"] != "manual":
+            raise ToolError(f"Task {t['id']} closes itself from the student's real reviews or quizzes (done_rule "
+                            f"{t['done_rule']}); I can't mark it done. Leave it open.")
+        changes["status"] = status
+    if due_on:
+        changes["due_on"] = _future_date(due_on)
+    if priority is not None:
+        if str(priority) not in ("1", "2", "3"):
+            raise ToolError("priority must be 1 (high), 2 (normal) or 3 (low).")
+        changes["priority"] = int(priority)
+    if title:
+        changes["title"] = _text(title, "title", study_tasks.TITLE_CHARS)
+    changes = {k: v for k, v in changes.items() if v is not None and v != t[k]}
+    if not changes:
+        raise ToolError("Nothing to change: give a different status, due_on, priority or title.")
+    course = conn.execute("SELECT * FROM courses WHERE id = ?", (t["course_id"],)).fetchone() if t["course_id"] else None
+    return _propose(ctx, "task_update", course, {"task_id": t["id"], "title": t["title"], "changes": changes},
+                    f"change task “{t['title'][:60]}”")
+
+
 # ---------------------------------------------------------------- memory: saved at once (it's the agent's own notes
 # about the student, not their data), shown in the chat and on /ask/memory, where the student can delete any of it
 
@@ -533,9 +644,10 @@ How to work:
 - Facts about the student's own courses, notes, flashcards, quizzes, progress, dates and schedule come only from your tools. Look them up; never guess them. If a lookup is empty, say so.
 - Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
 - For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
-- Changes (flashcards, questions, notebook sections, confidence ratings, exam dates, quizzes, study time) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added.
+- Changes (flashcards, questions, notebook sections, confidence ratings, exam dates, quizzes, study time, study tasks) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added.
 - When the student gives you a list (topics to learn, terms from a pre-assessment, missed questions), cover EVERY item: at least one flashcard per term, more where a term has two things worth knowing. Fill in answers from your own knowledge where their notes have none. A long list takes several add_flashcards calls in the same step, so make them all at once. Then say how many cards you proposed and name any item you left out and why.
 - You have a memory that carries across chats (below). Use `remember` for lasting facts worth knowing next time: weak topics and scores from a pre-assessment, goals, exam plans, how they like to study. Save a pre-assessment's weak topics as a few short memories, not one per term. Use `forget` when a memory turns out wrong or stale. Mention briefly what you saved.
+- Study tasks are the student's plan, not a record of work done. Look at list_tasks before planning; propose small, concrete tasks (one sitting, a date, minutes) rather than a long wish list. A task with done_rule cards_reviewed or quiz_finished is closed by the app when the student really reviews cards or finishes a quiz: you can't mark it done, and adding cards, questions or notes never completes anything. Never say work or a task is done without evidence from your tools (list_tasks shows it); propose "done" only for a manual task, and only when the student says they finished it.
 - Performance assessments (PAs) must be the student's own work. Never draft, outline, rewrite or grade PA submissions or task answers, even if asked; you cannot see PA drafts. You may explain the underlying concepts.
 - To quiz the student in the chat: ask one question at a time, wait for the answer, then give brief feedback and the next question.
 - Be concise and practical. Markdown is rendered. Refer to courses by code; writing [[D413]] links to that course. Use dates like "Mon Oct 5"."""
@@ -726,6 +838,45 @@ def apply(conn, p, form) -> tuple[str, str | None]:
         except ValueError as e:
             raise ApplyError(str(e))
         result, link = f"Logged {form.get('minutes')} min.", "/sessions"
+    elif kind == "tasks":
+        made, items = 0, payload["tasks"]
+        try:
+            with conn:  # all or none
+                for i in form.getlist("keep"):
+                    if not str(i).isdigit() or int(i) >= len(items):
+                        continue
+                    it, i = items[int(i)], int(i)
+                    cid = it["competency_id"] if conn.execute("SELECT 1 FROM competencies WHERE id = ?", (it["competency_id"],)).fetchone() else None
+                    study_tasks.insert(conn, form.get(f"title_{i}") or it["title"], course_id=it["course_id"], competency_id=cid,
+                                       note=it["note"], kind=it["kind"], due_on=form.get(f"due_{i}", it["due_on"]),
+                                       est_minutes=form.get(f"minutes_{i}", it["est_minutes"]),
+                                       priority=form.get(f"priority_{i}") or it["priority"], done_rule=it["done_rule"],
+                                       source=f"proposal:{p['id']}")
+                    made += 1
+        except study_tasks.TaskError as e:
+            raise ApplyError(str(e))
+        if not made:
+            raise ApplyError("Keep at least one task, or press Dismiss.")
+        result, link = f"Added {made} task{'s' * (made != 1)}.", f"{base}/tasks" if c else "/tasks"
+    elif kind == "task_update":
+        t = study_tasks.get(conn, payload["task_id"])
+        if not t or t["status"] not in study_tasks.OPEN:
+            raise ApplyError("That task is gone or already closed.")
+        want = lambda k: (form.get(k) if form.get(k) is not None else payload["changes"].get(k)) or None  # noqa: E731
+        status = want("status")
+        if status == "done" and t["done_rule"] != "manual":
+            raise ApplyError(f"This task closes itself when {study_tasks.RULES[t['done_rule']]}; it can't be marked done here.")
+        fields = {k: v for k, v in {"title": want("title"), "due_on": want("due_on"), "priority": want("priority")}.items()
+                  if v and str(v) != str(t[k])}
+        try:
+            study_tasks.update(conn, t["id"], **fields)
+            if status == "done":
+                study_tasks.complete(conn, t["id"], {"rule": "manual", "by": "you", "via": f"proposal:{p['id']}"})
+            elif status:
+                study_tasks.set_status(conn, t["id"], status)
+        except study_tasks.TaskError as e:
+            raise ApplyError(str(e))
+        result, link = f"Updated “{t['title'][:60]}”.", f"{base}/tasks" if c else "/tasks"
     else:
         raise ApplyError("Unknown proposal.")
     with conn:

@@ -74,6 +74,44 @@
         <div><label for="sm{{ p.id }}">Minutes</label><input type="number" id="sm{{ p.id }}" name="minutes" min="1" max="960" value="{{ pl.minutes }}"></div>
       </div>
       {% set go = 'Log time' %}
+    {% elif p.kind == 'tasks' %}
+      <p class="small muted">Check each task. Only ticked ones are added; edit the title, date, minutes or priority first if you like.</p>
+      {% for tk in pl.tasks %}{% set i = loop.index0 %}
+      <div class="proposal-item">
+        <label class="inline"><input type="checkbox" name="keep" value="{{ i }}" checked> Keep</label>
+        {% if tk.code %}<span class="badge accent">{{ tk.code }}</span>{% endif %}
+        <span class="small muted">{{ TASK_KINDS[tk.kind] }}{% if tk.done_rule != 'manual' %} · closes itself when {{ TASK_RULES[tk.done_rule] }}{% endif %}{% if tk.note %} · {{ tk.note }}{% endif %}</span>
+        <label for="tt{{ p.id }}_{{ i }}">Title</label>
+        <input type="text" id="tt{{ p.id }}_{{ i }}" name="title_{{ i }}" value="{{ tk.title }}" maxlength="200">
+        <div class="form-grid">
+          <div><label for="td{{ p.id }}_{{ i }}">Due</label><input type="date" id="td{{ p.id }}_{{ i }}" name="due_{{ i }}" value="{{ tk.due_on or '' }}"></div>
+          <div><label for="tm{{ p.id }}_{{ i }}">Minutes</label><input type="number" id="tm{{ p.id }}_{{ i }}" name="minutes_{{ i }}" min="1" max="1440" value="{{ tk.est_minutes or '' }}"></div>
+          <div><label for="tp{{ p.id }}_{{ i }}">Priority</label>
+            <select id="tp{{ p.id }}_{{ i }}" name="priority_{{ i }}">{% for n, label in TASK_PRIORITIES.items() %}<option value="{{ n }}" {{ 'selected' if tk.priority == n }}>{{ label }}</option>{% endfor %}</select></div>
+        </div>
+      </div>
+      {% endfor %}
+      {% set go = 'Add kept tasks' %}
+    {% elif p.kind == 'task_update' %}
+      {% set cur = current_task.get(p.id) %}
+      {% if not cur or cur.status not in ('todo', 'doing', 'blocked') %}
+        <p>{{ pl.title }} <span class="small muted">(this task is gone or already closed, so there is nothing to change)</span></p>
+        {% set go = 'Apply' %}
+      {% else %}
+      {% set ch = pl.changes %}
+      <p><strong>{{ cur.title }}</strong> <span class="small muted">now {{ TASK_STATUSES[cur.status]|lower }}{% if cur.due_on %}, due {{ cur.due_on|date('%b %-d') }}{% endif %}, {{ TASK_PRIORITIES[cur.priority]|lower }} priority</span></p>
+      <label for="ut{{ p.id }}">Title</label>
+      <input type="text" id="ut{{ p.id }}" name="title" value="{{ ch.title or cur.title }}" maxlength="200">
+      <div class="form-grid">
+        <div><label for="us{{ p.id }}">Status</label>
+          <select id="us{{ p.id }}" name="status">{% for k, label in TASK_STATUSES.items() %}{% if k != 'done' or cur.done_rule == 'manual' %}<option value="{{ k }}" {{ 'selected' if (ch.status or cur.status) == k }}>{{ label }}</option>{% endif %}{% endfor %}</select></div>
+        <div><label for="ud{{ p.id }}">Due</label><input type="date" id="ud{{ p.id }}" name="due_on" value="{{ ch.due_on or cur.due_on or '' }}"></div>
+        <div><label for="up{{ p.id }}">Priority</label>
+          <select id="up{{ p.id }}" name="priority">{% for n, label in TASK_PRIORITIES.items() %}<option value="{{ n }}" {{ 'selected' if (ch.priority or cur.priority) == n }}>{{ label }}</option>{% endfor %}</select></div>
+      </div>
+      {% if cur.done_rule != 'manual' %}<p class="small muted">This task closes itself when {{ TASK_RULES[cur.done_rule] }}, so Done isn't offered here.</p>{% endif %}
+      {% endif %}
+      {% set go = 'Apply change' %}
     {% endif %}
     <div class="actions">
       <button class="primary" type="submit">{{ go }}</button>

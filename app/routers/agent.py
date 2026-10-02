@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import agent, ai, catalog, markdown
+from .. import agent, ai, catalog, markdown, tasks
 from ..db import get_db
 from ..web import render
 from .notes import known_codes
@@ -18,7 +18,8 @@ QUICK = ["What should I study today?", "Plan my week.", "Quiz me on my weakest c
 FILL = ["Explain this differently: ", "Gap-check this competency against my notes: ",
         "From my pre-assessment, I need to learn these (make flashcards for every one, and remember my weak areas):\n"]
 KIND_LABELS = {"cards": "Flashcards", "questions": "Practice questions", "notebook": "Notebook section",
-               "confidence": "Competency confidence", "exam": "Exam date", "quiz": "Practice quiz", "study": "Study time"}
+               "confidence": "Competency confidence", "exam": "Exam date", "quiz": "Practice quiz", "study": "Study time",
+               "tasks": "Study tasks", "task_update": "Task change"}
 
 
 def _require_ai():
@@ -114,8 +115,11 @@ def ask_thread(request: Request, tid: int, conn=Depends(get_db)):
     for p in (x for ps in props.values() for x in ps if x["kind"] == "confidence"):
         comps[p["id"]] = conn.execute("SELECT confidence FROM competencies WHERE id = ?",
                                       (p["payload"]["competency_id"],)).fetchone()
+    current_task = {p["id"]: tasks.get(conn, p["payload"]["task_id"])
+                    for ps in props.values() for p in ps if p["kind"] == "task_update"}
     return render(request, "agent/thread.html", thread=t, messages=messages, quick=QUICK, fill=FILL,
-                  provider=ai.describe(), error=request.query_params.get("error"), current_conf=comps)
+                  provider=ai.describe(), error=request.query_params.get("error"), current_conf=comps,
+                  current_task=current_task)
 
 
 @router.post("/ask/{tid}/send")
