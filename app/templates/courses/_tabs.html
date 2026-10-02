@@ -1,11 +1,28 @@
+{# Two levels: Notes / Practice / Assessment / Ask are the sections; a section with several pages shows them in a second row.
+   Every page keeps its URL; `tab` (set by each route) says which page is open. #}
+{% set root = "/courses/" ~ course.code %}
+{% set section = "notes" if tab in ("overview", "competencies", "notebook", "mistakes")
+   else ("practice" if tab in ("cards", "quizzes", "ai") else ("assessment" if tab in ("assessment", "pa") else "")) %}
+{% macro link(href, label, on, exact=True) -%}
+<a href="{{ href }}"{% if on %} class="active" aria-current="{{ 'page' if exact else 'true' }}"{% endif %}>{{ label }}{{ caller() if caller else '' }}</a>
+{%- endmacro %}
 <nav class="tabs" aria-label="Course sections">
-  <a href="/courses/{{ course.code }}" class="{{ 'active' if tab == 'overview' }}">Overview</a>
-  <a href="/courses/{{ course.code }}/competencies" class="{{ 'active' if tab == 'competencies' }}">Competencies</a>
-  <a href="/courses/{{ course.code }}/notes/notebook" class="{{ 'active' if tab == 'notebook' }}">Notebook</a>
-  <a href="/courses/{{ course.code }}/cards" class="{{ 'active' if tab == 'cards' }}">Cards{% if cards_due %} <span class="badge amber">{{ cards_due }}</span>{% endif %}</a>
-  <a href="/courses/{{ course.code }}/quizzes" class="{{ 'active' if tab == 'quizzes' }}">Quizzes</a>
-  <a href="/courses/{{ course.code }}/notes/mistakes" class="{{ 'active' if tab == 'mistakes' }}">Mistakes</a>
-  <a href="/courses/{{ course.code }}/assessment" class="{{ 'active' if tab in ('assessment', 'pa') }}">{{ {'OA': 'OA prep', 'PA': 'PA workspace', 'cert': 'Cert prep'}.get(course.assessment_type, 'Assessment') }}</a>
-  {% if ai_enabled %}<a href="/courses/{{ course.code }}/ai" class="{{ 'active' if tab == 'ai' }}">AI assist</a>{% endif %}
+  {{ link(root, "Notes", section == "notes", tab == "overview") }}
+  {% call link(root ~ "/cards", "Practice", section == "practice", false) %}{% if cards_due %} <span class="badge amber" title="{{ cards_due }} cards due">{{ cards_due }}</span>{% endif %}{% endcall %}
+  {{ link(root ~ "/assessment", {'OA': 'OA prep', 'PA': 'PA workspace', 'cert': 'Cert prep'}.get(course.assessment_type, 'Assessment'), section == "assessment", tab == "assessment") }}
   {% if ai_enabled %}<a href="/ask?course={{ course.code }}">Ask</a>{% endif %}
 </nav>
+{% if section == "notes" %}
+<nav class="subtabs" aria-label="Notes pages">
+  {{ link(root, "Overview", tab == "overview") }}
+  {{ link(root ~ "/competencies", "Competencies", tab == "competencies") }}
+  {{ link(root ~ "/notes/notebook", "Notebook", tab == "notebook") }}
+  {{ link(root ~ "/notes/mistakes", "Mistakes", tab == "mistakes") }}
+</nav>
+{% elif section == "practice" %}
+<nav class="subtabs" aria-label="Practice pages">
+  {% call link(root ~ "/cards", "Cards", tab == "cards") %}{% if cards_due %} <span class="badge amber">{{ cards_due }}</span>{% endif %}{% endcall %}
+  {{ link(root ~ "/quizzes", "Quizzes", tab == "quizzes") }}
+  {% if ai_enabled %}{{ link(root ~ "/ai", "AI assist", tab == "ai") }}{% endif %}
+</nav>
+{% endif %}

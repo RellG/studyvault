@@ -1,3 +1,7 @@
+{# nav_active comes from web.nav_section(); the current section gets .active and aria-current="page" #}
+{%- macro item(key, href, label) -%}
+<a href="{{ href }}"{% if nav_active == key %} class="active" aria-current="page"{% endif %}>{{ label }}{{ caller() if caller else '' }}</a>
+{%- endmacro -%}
 <!doctype html>
 <html lang="en" data-theme="{{ theme }}" data-mode="{{ mode }}">
 <head>
@@ -13,27 +17,35 @@
 </head>
 <body>
   {% if authed %}
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar">
     <a class="brand" href="/">studyvault</a>
-    <nav class="nav">
+    <nav class="nav" aria-label="Main">
       {% block nav %}
-      <a href="/">Dashboard</a>
-      <a href="/terms">Terms</a>
-      <a href="/review">Review{% if due_total %} <span class="badge amber">{{ due_total }}</span>{% endif %}</a>
-      <a href="/sessions">Study</a>
-      <a href="/certs">Certs</a>
-      <a href="/search">Search</a>
-      {% if ai_enabled %}<a href="/ask">Ask</a>{% endif %}
-      <a href="/settings">Settings</a>
-      {% if nav_extra is defined %}{{ nav_extra|safe }}{% endif %}
+      {{ item("today", "/", "Today") }}
+      {{ item("courses", "/terms", "Courses") }}
+      {% call item("review", "/review", "Review") %}{% if due_total %} <span class="badge amber" title="{{ due_total }} due">{{ due_total }}</span>{% endif %}{% endcall %}
+      {% if ai_enabled %}{{ item("ask", "/ask", "Ask") }}{% endif %}
       {% endblock %}
+      <details class="more">
+        <summary{% if nav_active == 'more' %} class="active"{% endif %}>More</summary>
+        <div class="more-menu">
+          <a href="/sessions"{% if request.url.path.startswith('/sessions') %} aria-current="page"{% endif %}>Study time</a>
+          <a href="/certs"{% if request.url.path.startswith('/certs') %} aria-current="page"{% endif %}>Certs</a>
+          {% if ai_enabled %}<a href="/ask/memory"{% if request.url.path.startswith('/ask/memory') %} aria-current="page"{% endif %}>Ask memory</a>{% endif %}
+          <a href="/settings"{% if request.url.path.startswith('/settings') %} aria-current="page"{% endif %}>Settings</a>
+          <form method="post" action="/logout" class="logout"><button class="quiet" type="submit">Log out</button></form>
+        </div>
+      </details>
     </nav>
     {% if active_session %}<a class="timer-pill" href="/sessions" title="Study timer running">{% include "_clock.html" %} {{ active_session.code or "study" }} <span class="js-elapsed" data-elapsed="{{ active_session.elapsed }}"></span></a>{% endif %}
-    <form method="get" action="/search" class="no-print" role="search" style="margin:0"><input type="search" name="q" placeholder="Search…" aria-label="Search" style="min-height:36px;padding:.3rem .6rem;width:11rem"></form>
-    <form method="post" action="/logout" class="logout"><button class="link" type="submit">Log out</button></form>
+    <form method="get" action="/search" class="topsearch no-print" role="search"><input type="search" name="q" placeholder="Search…" aria-label="Search"></form>
+    <a class="search-link no-print{{ ' active' if nav_active == 'search' }}" href="/search" aria-label="Search"{% if nav_active == 'search' %} aria-current="page"{% endif %}>
+      <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    </a>
   </header>
   {% endif %}
-  <main class="page">
+  <main class="page" id="main">
     {% block content %}{% endblock %}
   </main>
   {% block scripts %}{% endblock %}

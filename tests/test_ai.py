@@ -184,12 +184,12 @@ def test_only_selected_notes_are_sent(monkeypatch, mock_api):
 
 def test_pages_hidden_when_off(client):
     assert client.get("/courses/D413/ai").status_code == 404
-    assert "AI assist" not in client.get("/courses/D413").text
+    assert "AI assist" not in client.get("/courses/D413/cards").text  # a Practice page
 
 
 def test_ai_flow_drafts_then_accept(client, monkeypatch, mock_api):
     use(monkeypatch)
-    assert "AI assist" in client.get("/courses/D413").text
+    assert "AI assist" in client.get("/courses/D413/cards").text  # under Practice
     mock_api.set(lambda r: anthropic_reply('[{"front": "802.11ax name?", "back": "Wi-Fi 6"}, {"front": "junk", "back": "x"}]'))
     page = client.get("/courses/D413/ai").text
     assert 'name="count"' in page and 'name="fill"' in page

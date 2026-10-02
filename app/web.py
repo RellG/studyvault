@@ -24,6 +24,18 @@ def _fmt_date(value, fmt="%b %-d, %Y"):
     return d.strftime(fmt) if d else "—"
 
 
+# Which top-bar item a URL belongs to (the first prefix that matches wins), so the nav can mark the current section.
+NAV_SECTIONS = [("/terms", "courses"), ("/courses", "courses"), ("/quizzes", "courses"), ("/cards", "courses"),
+                ("/review", "review"), ("/tasks", "tasks"), ("/ask/memory", "more"), ("/ask", "ask"), ("/search", "search"),
+                ("/sessions", "more"), ("/certs", "more"), ("/settings", "more")]
+
+
+def nav_section(path: str) -> str:
+    if path == "/":
+        return "today"
+    return next((key for prefix, key in NAV_SECTIONS if path == prefix or path.startswith(prefix + "/")), "")
+
+
 templates.env.filters["date"] = _fmt_date
 templates.env.globals["STATUS_LABELS"] = STATUS_LABELS
 
@@ -33,7 +45,7 @@ context_providers = []
 
 def render(request: Request, template: str, status_code: int = 200, **ctx):
     base = {"today": clock.today(), "ai_enabled": settings.ai_enabled, "authed": bool(request.session.get("auth")),
-            **appearance.get()}
+            "nav_active": nav_section(request.url.path), **appearance.get()}
     if base["authed"]:
         for provider in context_providers:
             base.update(provider(request))

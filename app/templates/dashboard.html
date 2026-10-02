@@ -2,7 +2,7 @@
 {% from "_macros.html" import status, readiness_badge %}
 {% block content %}
 <div class="row spread">
-  <h1>Dashboard</h1>
+  <h1>Today</h1>
   <span class="muted small">{{ today|date("%A, %b %-d") }}{% if p.streak %} · {{ p.streak }}-day study streak{% endif %}</span>
 </div>
 
@@ -74,7 +74,7 @@
 
   {# ---- flashcards + exams ---- #}
   <div class="card">
-    <h2>Today</h2>
+    <h2>Cards and exams</h2>
     <p>{% if due_all %}<a class="button primary small" href="/review">Review {{ due_all }} due card{{ '' if due_all == 1 else 's' }}</a>{% else %}<span class="correct">✓ No cards due</span>{% endif %}</p>
     {% if exams %}
     <h3>Exams coming up</h3>
