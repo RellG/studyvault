@@ -65,7 +65,7 @@ def note_page(request: Request, code: str, name: str, mode: str = "view", conn=D
     notes_fs.ensure_course_files(conn, c)
     text, ver = notes_fs.read_note(c, name)
     tab = name if name in notes_fs.NOTE_FILES else "pa"
-    return render(request, "courses/note.html", **course_context(conn, c), tab=tab, name=name, mode=mode,
+    return render(request, "courses/note.html", **course_context(conn, c), tab=tab, name=name, note_mode=mode,
                   text=text, version=ver, html=render_md(conn, text) if mode != "edit" else "",
                   title=notes_fs.NOTE_TITLES.get(name, name))
 

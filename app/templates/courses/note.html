@@ -2,7 +2,7 @@
 {% block title %}{{ course.code }} {{ title }} · studyvault{% endblock %}
 {% block head %}
 {% include "courses/_hljs_head.html" %}
-{% if mode == "edit" %}
+{% if note_mode == "edit" %}
 <link rel="stylesheet" href="/static/vendor/fa/css/font-awesome.min.css">
 <link rel="stylesheet" href="/static/vendor/easymde.min.css">
 <script src="/static/vendor/easymde.min.js"></script>
@@ -15,7 +15,7 @@
 <div class="row spread no-print">
   <h2 style="margin: 0">{{ title }}</h2>
   <div class="row">
-    {% if mode == "edit" %}
+    {% if note_mode == "edit" %}
       <span id="save-state" class="save-state" aria-live="polite">Saved</span>
       <button type="button" class="small" id="save-now">Save now</button>
       <a class="button small primary" href="?">Done</a>
@@ -24,7 +24,7 @@
     {% endif %}
   </div>
 </div>
-{% if mode == "edit" %}
+{% if note_mode == "edit" %}
 <div class="editor-wrap" style="margin-top: .6rem">
   <textarea id="note-text">{{ text }}</textarea>
 </div>
@@ -35,7 +35,7 @@
 {% block below_note %}{% endblock %}
 {% endblock %}
 {% block scripts %}
-{% if mode == "edit" %}
+{% if note_mode == "edit" %}
 <script>
 (function () {
   var url = "/courses/{{ course.code }}/notes/{{ name }}";

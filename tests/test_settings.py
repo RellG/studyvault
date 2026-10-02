@@ -50,3 +50,10 @@ def test_removed_theme_falls_back_to_notebook(client):
     conn.close()
     assert 'data-theme="notebook"' in client.get("/").text
     assert client.post("/settings", data={"theme": "nightops", "mode": "dark"}).status_code == 400
+
+
+def test_note_tabs_keep_the_chosen_mode(client):
+    """A note's ?mode=edit is the editor, not light/dark: it must not replace data-mode on <html>."""
+    client.post("/settings", data={"theme": "notebook", "mode": "dark"})
+    for url in ("/courses/D413/notes/notebook", "/courses/D413/notes/notebook?mode=edit", "/courses/D413"):
+        assert 'data-mode="dark"' in client.get(url).text, url
