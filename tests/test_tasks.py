@@ -167,7 +167,7 @@ def test_create_errors_keep_what_was_typed(client):
 
 
 def test_back_is_a_local_path_only(client):
-    for bad in ("//evil.example", "/\\evil.example", "https://evil.example", ""):
+    for bad in ("//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "https://evil.example", ""):
         r = client.post("/tasks", data={"title": "x", "back": bad}, follow_redirects=False)
         assert r.headers["location"] == "/tasks", bad
 
