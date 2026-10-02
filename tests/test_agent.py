@@ -189,7 +189,7 @@ def test_every_read_tool_runs_on_seeded_data(seeded, tid):
     args = {"get_overview": {}, "list_courses": {"term": 1}, "get_course": {"code": "D413"},
             "search_notes": {"query": "cloud"}, "read_note": {"code": "D413", "name": "overview"},
             "list_competencies": {"code": "D413"}, "get_card_stats": {}, "get_quiz_history": {"code": "D413"},
-            "get_mistakes": {"code": "D413"}, "get_study_time": {}, "list_certs": {}}
+            "get_mistakes": {"code": "D413"}, "get_study_time": {}, "list_certs": {}, "list_tasks": {}}
     assert set(args) == {n for n, t in agent.TOOLS.items() if t["kind"] == "read"}
     for name, a in args.items():
         out = json.loads(agent.run_tool(k, ai.Call("", name, a)))
