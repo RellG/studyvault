@@ -51,12 +51,12 @@ async def brain_run(request: Request, code: str, conn=Depends(get_db)):
     action = form.get("action")
     if action not in brain.KINDS:
         raise HTTPException(400)
-    if action in ("fill", "refresh", "overview") and brain.pending_draft(conn, c["id"]):
+    if action in ("fill", "refresh", "overview", "notes") and brain.pending_draft(conn, c["id"]):
         return _page(request, conn, c, error="A draft is waiting for review. Add or dismiss it first, so it isn't replaced.",
                      status_code=409)
     depth = form.get("depth") if form.get("depth") in brain.DEPTHS else "normal"
     try:
-        brain.start(c, action, depth)
+        brain.start(c, action, depth, form.get("what") if form.get("what") in brain.WHAT else "both")
     except ai.AIError as e:
         return _page(request, conn, c, error=str(e), status_code=409)
     return RedirectResponse(f"/courses/{c['code']}/brain", status_code=303)

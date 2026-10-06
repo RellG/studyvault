@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai, ai_actions, assessments, cards, chunks, clock, competencies as comp, markdown, notes_fs, quizzes
+from .. import ai, ai_actions, assessments, brain, cards, chunks, clock, competencies as comp, markdown, notes_fs, quizzes
 from ..db import get_db
 from ..web import render
 from .notes import course_context, known_codes, load
@@ -21,10 +21,14 @@ def _require_ai():
 
 
 def _page(request, conn, c, text="", section="", error=None, status_code=200, count=0, fill=True):
+    rows = [r for r in brain.sections(conn, c["id"]) if not brain.is_objectives_only(r["text"])]
+    whole = {"sections": len(rows), "chars": sum(r["chars"] for r in rows), "busy": brain.busy(),
+             "draft": brain.pending_draft(conn, c["id"])}
     return render(request, "ai/index.html", **course_context(conn, c), tab="ai", sections=cards.notes_sections(c),
                   comps=comp.list_for(conn, c["id"]), text=text, section=section, error=error, actions=ACTIONS,
                   provider=ai.describe(), integrity=assessments.INTEGRITY, max_chars=ai_actions.MAX_INPUT_CHARS,
-                  counts=ai_actions.COUNTS, count=count, fill=fill, status_code=status_code)
+                  counts=ai_actions.COUNTS, count=count, fill=fill, whole=whole, depths=brain.DEPTHS,
+                  status_code=status_code)
 
 
 @router.get("/courses/{code}/ai")

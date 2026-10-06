@@ -6,8 +6,36 @@
 {% if error %}<div class="banner red" role="alert">{{ error }} <span class="small">Nothing was saved; the rest of the app is unaffected.</span></div>{% endif %}
 {% if course.assessment_type == 'PA' %}<div class="banner info" role="note"><strong>{{ integrity }}</strong> These tools only work from your notes; there's no drafting help for the PA itself.</div>{% endif %}
 
-<form class="card" method="get" action="/courses/{{ course.code }}/ai">
-  <label for="section">Start from a notes section</label>
+{% if whole.sections %}
+<form class="card" method="post" action="/courses/{{ course.code }}/brain/run" id="whole-notes">
+  <h2 style="margin-top: 0">From all your notes</h2>
+  <p class="small muted">Goes through every section of your Overview, Competencies and Notebook notes ({{ whole.sections }} section{{ 's' if whole.sections != 1 }}, {{ '{:,}'.format(whole.chars) }} characters), not just one. It runs in the background{% if whole.chars > 14000 %}, a few minutes on the free tier{% endif %}, then leaves a draft grouped by section on <a href="/courses/{{ course.code }}/brain">From notes</a>. Cards and questions you already have aren't repeated; topic lists (like a pre-assessment list) get one per topic, marked <span class="badge amber">Check</span>. Sections that only list learning objectives are skipped.</p>
+  {% if whole.draft %}
+  <p class="small">A draft is waiting for review. <a href="/courses/{{ course.code }}/brain/draft/{{ whole.draft.id }}">Review it</a> first, so it isn't replaced.</p>
+  {% elif whole.busy %}
+  <p class="small">Working on {{ whole.busy }} right now. <a href="/courses/{{ whole.busy }}/brain">See progress</a>; the free tier handles one job at a time.</p>
+  {% else %}
+  <div class="row">
+    <label for="whole-what" class="inline">Make</label>
+    <select id="whole-what" name="what" class="ask-scope">
+      <option value="cards">Flashcards</option>
+      <option value="questions">Practice questions</option>
+      <option value="both">Both</option>
+    </select>
+    <label for="whole-depth" class="inline">How many</label>
+    <select id="whole-depth" name="depth" class="ask-scope">
+      <option value="light">Fewer</option>
+      <option value="normal" selected>Normal</option>
+      <option value="thorough">More</option>
+    </select>
+    <button class="primary" type="submit" name="action" value="notes">Make from all notes</button>
+  </div>
+  {% endif %}
+</form>
+{% endif %}
+
+<form class="card" method="get" action="/courses/{{ course.code }}/ai" {{ 'style=margin-top:1rem' if whole.sections }}>
+  <label for="section">Or start from one notes section</label>
   <div class="row" style="flex-wrap: nowrap">
     <select id="section" name="section">
       <option value="">— choose —</option>

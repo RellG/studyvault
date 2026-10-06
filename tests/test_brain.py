@@ -782,3 +782,57 @@ def test_set_overview_keeps_the_rest_of_the_note_byte_for_byte(seeded, d413):
     brain.set_overview(seeded, d413, "One.")
     brain.set_overview(seeded, d413, "Two.")
     assert notes_fs.read_note(d413, "overview")[0] == "# D413 · T\n\n## Course overview (generated)\n\nTwo.\n\n" + tail
+
+
+# ---------------------------------------------------------------- AI assist: cards / questions from all the notes
+
+OBJECTIVES = "\n## Objectives\nAt the end of this unit, you will be able to:\ndefine telecomm\ndefine wireless communication\n"
+
+
+def test_cards_from_all_notes_cover_every_section_without_an_analysis(seeded, d413, fake):
+    notes_fs.write_note(seeded, d413, "notebook", NOTES + OBJECTIVES)
+    cards.add(seeded, d413["id"], "What about notebook#wireless?", "Already have it")
+    p = json.loads(seeded.execute("SELECT payload_json FROM brain_drafts WHERE id = ?",
+                                  (brain.build(seeded, d413, scope="notes", what="cards"),)).fetchone()[0])
+    assert [x.split(" ")[0] for x in fake.prompts] == ["Write"]  # no analysis call
+    gen = fake.prompts[0]
+    assert "notebook#objectives" not in gen  # objectives-only sections are skipped
+    assert "- notebook#wireless: about " in gen and "questions;" not in gen and "one card per topic" in gen
+    assert p["scope"] == "notes" and p["what"] == "cards" and not p["questions"] and not p["tasks"] and not p["overview"]
+    assert {c["section"] for c in p["cards"]} == {"notebook#preassessment", "notebook#wired-transmission"}  # wireless: had it
+    assert p["summary"] == "Flashcards from all 3 sections of your notes; ones you already have were left out."
+
+
+def test_questions_from_all_notes(seeded, d413, fake):
+    p = json.loads(seeded.execute("SELECT payload_json FROM brain_drafts WHERE id = ?",
+                                  (brain.build(seeded, d413, scope="notes", what="questions"),)).fetchone()[0])
+    gen = fake.prompts[-1]
+    assert "cards;" not in gen and "one question per topic" in gen and "questions;" in gen
+    assert not p["cards"] and p["questions"] and p["what"] == "questions"
+
+
+def test_all_notes_button_on_ai_assist(client, fake):
+    conn = db.connect()
+    try:
+        c = catalog.get_course(conn, "D413")
+        notes_fs.ensure_repo()
+        notes_fs.ensure_course_files(conn, c)
+        assert "From all your notes" not in client.get("/courses/D413/ai").text  # no notes yet
+        notes_fs.write_note(conn, c, "notebook", NOTES)
+        page = client.get("/courses/D413/ai").text
+        assert "From all your notes" in page and "3 sections" in page and 'value="notes"' in page
+        r = client.post("/courses/D413/brain/run", data={"action": "notes", "what": "cards", "depth": "light"}, follow_redirects=False)
+        assert r.status_code == 303
+        draft_id = wait_done("D413")["draft_id"]
+        p = json.loads(conn.execute("SELECT payload_json FROM brain_drafts WHERE id = ?", (draft_id,)).fetchone()[0])
+        assert p["cards"] and not p["questions"] and p["depth"] == "light"
+        assert "A draft is waiting for review" in client.get("/courses/D413/ai").text
+        d = client.get(f"/courses/D413/brain/draft/{draft_id}").text
+        assert "Add ticked items" in d and "Practice questions" not in d and "Study plan" not in d
+        r = client.post("/courses/D413/brain/run", data={"action": "notes", "what": "questions"})
+        assert r.status_code == 409  # the waiting draft isn't replaced
+        r = client.post(f"/courses/D413/brain/draft/{draft_id}/apply", data={"card": ["0", "1"]}, follow_redirects=False)
+        assert "Added+2+cards" in r.headers["location"] or "Added%202%20cards" in r.headers["location"]
+        assert conn.execute("SELECT COUNT(*) FROM cards WHERE source_key IS NOT NULL").fetchone()[0] == 2  # linked to sections
+    finally:
+        conn.close()

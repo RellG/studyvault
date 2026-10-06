@@ -293,17 +293,23 @@ def _targets(r, depth: float, topics: bool) -> tuple[int, int]:
     return n, max(1, min(4, round(r["chars"] / 900 * depth)))
 
 
-def _gen_prompt(course, rows, depth: float) -> tuple[str, str]:
+def _gen_prompt(course, rows, depth: float, what: str = "both") -> tuple[str, str]:
     notes, topics = [], False
     for r in rows:
         t = is_topic_list(r["text"])
         topics |= t
         nc, nq = _targets(r, depth, t)
-        mode = ("a list of topics to learn: write at least one card per topic, answering from accurate standard knowledge "
+        if what == "cards":
+            nq = 0
+        elif what == "questions":  # only questions: about one for every two cards a section would get
+            nc, nq = 0, max(nq, round(nc / 2))
+        mode = (f"a list of topics to learn: write at least one {'question' if what == 'questions' else 'card'} per topic, "
+                "answering from accurate standard knowledge "
                 'where the notes give no answer, and set "source" to "general" for those') if t else \
                ('use ONLY what this section says; "source" must be "notes"; write fewer items if it is thin; write nothing '
                 'for a section that only lists learning objectives, links or headings')
-        notes.append(f'- {r["key"]}: about {nc} cards and {nq} questions; {mode}')
+        want = " and ".join(f"about {n} {w}" for n, w in ((nc, "cards"), (nq, "questions")) if n)
+        notes.append(f'- {r["key"]}: {want}; {mode}')
     prompt = (f"Write flashcards and practice questions for {course['code']} {course['title']} from the sections below, in the "
               "style of a WGU objective assessment. One fact per card, short answers; favour definitions, ports, commands, "
               "numbers, comparisons. Questions: single-answer or select-all-that-apply, 4 choices, the correct choice indexes "
@@ -318,13 +324,13 @@ def _norm(text: str) -> str:
     return re.sub(r"\W+", " ", str(text).lower()).strip()
 
 
-def _generate(course, rows, depth, have_fronts, have_prompts, warnings) -> tuple[list, list]:
-    prompt, system = _gen_prompt(course, rows, depth)
+def _generate(course, rows, depth, have_fronts, have_prompts, warnings, what: str = "both") -> tuple[list, list]:
+    prompt, system = _gen_prompt(course, rows, depth, what)
     raw = _object(_call(prompt, system))
     by_key = {r["key"]: r for r in rows}
     topic = {r["key"]: is_topic_list(r["text"]) for r in rows}
     out_cards, out_qs = [], []
-    for c in raw.get("cards") or []:
+    for c in (raw.get("cards") or []) if what != "questions" else []:
         if not isinstance(c, dict) or c.get("section") not in by_key:
             continue
         front, back = _str(c.get("front"), 1000), _str(c.get("back"), 2000)
@@ -334,7 +340,7 @@ def _generate(course, rows, depth, have_fronts, have_prompts, warnings) -> tuple
         have_fronts.add(_norm(front))
         out_cards.append({"section": c["section"], "label": chunks.where(by_key[c["section"]]), "front": front,
                           "back": back, "general": general})
-    for q in raw.get("questions") or []:
+    for q in (raw.get("questions") or []) if what != "cards" else []:
         if not isinstance(q, dict) or q.get("section") not in by_key:
             continue
         clean = ai_actions.clean_question(q, fill=True)
@@ -481,13 +487,25 @@ def set_overview(conn, course, text: str) -> None:
         notes_fs.write_note(conn, course, "overview", new)
 
 
-def build(conn, course, depth: str = "normal", state: dict | None = None, scope: str = "all") -> int:
+WHAT = {"both": "flashcards and practice questions", "cards": "flashcards", "questions": "practice questions"}
+
+
+def build(conn, course, depth: str = "normal", state: dict | None = None, scope: str = "all", what: str = "both") -> int:
     """Analyze if needed, write the cards and questions, and save the draft. Returns its id.
     scope 'uncovered' writes only for sections with no cards or questions yet, and leaves out the competencies, study
-    plan and overview (those came with the first build); it reuses any analysis, even an old one, instead of a new call."""
+    plan and overview (those came with the first build); it reuses any analysis, even an old one, instead of a new call.
+    scope 'notes' writes for every section of the notes (AI assist's "all my notes"), cards and/or questions only (`what`),
+    with no analysis call. Both skip items the course already has."""
     factor = DEPTHS.get(depth, 1.0)
+    what = what if what in WHAT else "both"
     got = get_profile(conn, course["id"])
-    if scope == "uncovered":
+    if scope == "notes":
+        rows = [r for r in sections(conn, course["id"]) if not is_objectives_only(r["text"])]
+        if not rows:
+            raise BrainError("There's nothing to make them from yet: write some notes first.")
+        profile = got["profile"] if got else None
+        _step(state, f"Going through all {len(rows)} sections of your notes ({sum(r['chars'] for r in rows):,} characters)…")
+    elif scope == "uncovered":
         want = set(coverage(conn, course["id"])["uncovered"])
         rows = [r for r in sections(conn, course["id"]) if r["key"] in want]
         if not rows:
@@ -509,9 +527,9 @@ def build(conn, course, depth: str = "normal", state: dict | None = None, scope:
     all_cards, all_qs, warnings = [], [], []
     parts = _batches(rows, BATCH_CHARS)
     for i, part in enumerate(parts, 1):
-        _step(state, f"Writing cards and questions: part {i} of {len(parts)}…", i - 1, len(parts))
+        _step(state, f"Writing {'cards and questions' if what == 'both' else WHAT[what]}: part {i} of {len(parts)}…", i - 1, len(parts))
         try:
-            c, q = _generate(course, part, factor, have_fronts, have_prompts, warnings)
+            c, q = _generate(course, part, factor, have_fronts, have_prompts, warnings, what)
             all_cards += c
             all_qs += q
         except ai.AIError as e:
@@ -525,7 +543,12 @@ def build(conn, course, depth: str = "normal", state: dict | None = None, scope:
             raise BrainError("The model found nothing in those sections to make cards or questions from (they may only "
                              "list links or headings). Add detail to them and try again.")
         raise BrainError("Nothing could be drafted. " + (warnings[0] if warnings else "The model returned no usable items."))
-    if scope == "uncovered":
+    if scope == "notes":
+        payload = {"summary": f"{WHAT[what].capitalize()} from all {len(rows)} sections of your notes"
+                              f"{'; ones you already have were left out' if have_fronts or have_prompts else ''}.",
+                   "scope": scope, "what": what, "depth": depth, "competencies": [], "cards": all_cards, "questions": all_qs,
+                   "tasks": [], "overview": "", "hashes": {r["key"]: r["hash"] for r in rows}, "warnings": warnings}
+    elif scope == "uncovered":
         payload = {"summary": f"Cards and questions for {len(rows)} section{'s' if len(rows) != 1 else ''} that had none.",
                    "scope": scope, "depth": depth, "competencies": [], "cards": all_cards, "questions": all_qs, "tasks": [],
                    "overview": "", "hashes": {r["key"]: r["hash"] for r in rows}, "warnings": warnings}
@@ -707,7 +730,7 @@ def pending_draft(conn, course_id: int):
 
 # ---------------------------------------------------------------- background job (one at a time)
 
-KINDS = ("analyze", "build", "fill", "refresh", "overview")
+KINDS = ("analyze", "build", "fill", "refresh", "overview", "notes")
 _job: dict = {}
 _job_lock = threading.Lock()
 
@@ -720,8 +743,9 @@ def _step(state, text, done=None, of=None):
             state["done_parts"], state["parts"] = done, of
 
 
-def start(course, kind: str = "build", depth: str = "normal") -> dict:
-    """Begin a job in the background: kind = analyze | build | fill (build for uncovered sections only) | refresh | overview.
+def start(course, kind: str = "build", depth: str = "normal", what: str = "both") -> dict:
+    """Begin a job in the background: kind = analyze | build | fill (build for uncovered sections only) | refresh | overview
+    | notes (cards and/or questions, `what`, from every section: AI assist's "all my notes").
     Raises BrainError if a job is already running."""
     global _job
     if kind not in KINDS:
@@ -732,13 +756,14 @@ def start(course, kind: str = "build", depth: str = "normal") -> dict:
         if _job and not _job["done"]:
             raise BrainError(f"Already working on {_job['code']} ({_job['step']}). The free tier handles one job at a time.")
         _job = {"code": course["code"], "kind": kind, "depth": depth, "started": time.time(), "step": "Starting…",
-                "steps": [], "done": False, "error": None, "draft_id": None, "done_parts": 0, "parts": 0, "seen": False}
+                "steps": [], "done": False, "error": None, "draft_id": None, "done_parts": 0, "parts": 0, "seen": False,
+                "what": what}
         state = _job
-    threading.Thread(target=_run, args=(state, course["code"], kind, depth), daemon=True, name=f"brain-{course['code']}").start()
+    threading.Thread(target=_run, args=(state, course["code"], kind, depth, what), daemon=True, name=f"brain-{course['code']}").start()
     return state
 
 
-def _run(state, code, kind, depth):
+def _run(state, code, kind, depth, what="both"):
     conn = db.connect()
     try:
         course = catalog.get_course(conn, code)
@@ -748,6 +773,8 @@ def _run(state, code, kind, depth):
             state["draft_id"] = refresh(conn, course, state)
         elif kind == "overview":
             state["draft_id"] = write_overview(conn, course, state)
+        elif kind == "notes":
+            state["draft_id"] = build(conn, course, depth, state, scope="notes", what=what)
         else:
             state["draft_id"] = build(conn, course, depth, state, scope="uncovered" if kind == "fill" else "all")
     except ai.AIError as e:
