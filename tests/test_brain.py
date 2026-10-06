@@ -61,6 +61,9 @@ class Fake:
             return reply(self.generation(keys))
         if prompt.startswith("My notes for"):
             return reply(self.refresh(prompt))
+        if prompt.startswith("Here are the competencies"):
+            return reply({"summary": "A course about telecom basics.", "topics": [{"title": "Media", "competencies": [0, "x", 9]},
+                                                                                  {"title": "", "competencies": [1]}]})
         raise AssertionError("unexpected prompt: " + prompt[:60])
 
     def refresh(self, prompt):
@@ -271,7 +274,7 @@ def test_apply_adds_only_what_is_ticked_and_links_it(seeded, d413, fake):
         ("title_0", "My own title"), ("due_0", "2026-10-20")])
     before = notes_fs.read_note(d413, "notebook")[0]
     result = brain.apply_draft(seeded, d413, draft, form)
-    assert result == "Added 2 competencies, 1 card, 1 question, 2 tasks, an overview summary."
+    assert result == "Added 2 competencies, 1 card, 1 question, 2 tasks, the course overview."
     assert [r["text"] for r in competencies.list_for(seeded, d413["id"])] == ["Compare wired media", "Choose Wi-Fi channels"]
     card = seeded.execute("SELECT * FROM cards").fetchone()
     assert (card["front"], card["back"], card["source"], card["source_key"]) == ("Which media carry light?", "Fiber", "ai-accepted", "notebook#wired-transmission")
@@ -284,7 +287,7 @@ def test_apply_adds_only_what_is_ticked_and_links_it(seeded, d413, fake):
     assert [t["title"] for t in tasks] == ["My own title", f"Take a D413 practice quiz"] and tasks[0]["due_on"] == "2026-10-20"
     assert tasks[1]["done_rule"] == "quiz_finished" and tasks[0]["source"] == f"brain:{draft['id']}"
     overview = notes_fs.read_note(d413, "overview")[0]
-    assert "## From my notes ·" in overview and "These notes cover" in overview
+    assert "## Course overview (generated)" in overview and "These notes cover" in overview
     assert notes_fs.read_note(d413, "notebook")[0] == before  # the student's own notes are untouched
     assert seeded.execute("SELECT status FROM brain_drafts").fetchone()[0] == "applied"
     with pytest.raises(brain.ApplyError, match="already"):
@@ -643,8 +646,8 @@ def test_the_summary_a_build_adds_is_not_treated_as_notes(seeded, d413, fake):
                         "define telecomm\ndefine wireless communication\n")
     draft = seeded.execute("SELECT * FROM brain_drafts WHERE id = ?", (brain.build(seeded, d413),)).fetchone()
     brain.apply_draft(seeded, d413, draft, FormData([("overview", "1"), ("card", "0")]))
-    assert any(r["heading"].startswith("From my notes · ") for r in seeded.execute("SELECT heading FROM note_chunks"))
-    assert not any(r["heading"].startswith("From my notes") for r in brain.sections(seeded, d413["id"]))
+    assert any(r["heading"] == "Course overview (generated)" for r in seeded.execute("SELECT heading FROM note_chunks"))
+    assert not any(r["heading"].startswith("Course overview") for r in brain.sections(seeded, d413["id"]))
     cov = brain.coverage(seeded, d413["id"])
     assert cov["objectives"] == ["notebook#objectives"] and "notebook#objectives" not in cov["uncovered"]
     assert cov["sections"] == 3 and cov["covered"] == 1
@@ -658,3 +661,124 @@ def test_refresh_judges_a_topic_list_by_its_topics(seeded, d413, fake):
     prompt = fake.prompts[-1]
     assert 'title="PreAssessment" kind="topic list">' in prompt and 'title="Wireless">' in prompt
     assert "keep such an item while its topic is still in the list" in prompt
+
+
+# ---------------------------------------------------------------- the course overview
+
+def overview_body(course):
+    text = notes_fs.read_note(course, "overview")[0]
+    return text, text.split("## Course overview (generated)", 1)[1].split("\n## ", 1)[0] if "## Course overview (generated)" in text else ""
+
+
+def test_overview_text_comes_from_the_analysis(seeded, d413, fake):
+    prof = brain.analyze(seeded, d413)
+    text = brain.overview_text(prof, ["Official competency one"])
+    assert text.startswith("**In short.** These notes cover transmission media.")
+    assert "- Define telecomm" in text and "- Official competency one" in text and "Compare wired media" not in text
+    topics = text.split("**What my notes cover**", 1)[1]
+    assert topics.index("Wired Transmission** (core)") < topics.index("**Preassessment**")  # core material first
+    assert "**Thin spots in my notes**" in text and "- **Wireless**: Only a few lines" in text
+    assert "Compare wired media" in brain.overview_text(prof)  # no competency list: the analysis's own suggestions
+
+
+def test_set_overview_adds_then_replaces_its_own_section_only(seeded, d413):
+    notes_fs.write_note(seeded, d413, "overview", "# D413 · Telecomm\n\n**Assessment type:** OA\n\n## What this course covers\n\nMy own words.\n\n## Plan\n\n- read\n")
+    brain.set_overview(seeded, d413, "First version.\n\n# A heading the model wrote\nmore")
+    text, body = overview_body(d413)
+    assert text.index("**Assessment type:** OA") < text.index("## Course overview (generated)") < text.index("## What this course covers")
+    assert "**A heading the model wrote**" in body and "My own words." in text
+    brain.set_overview(seeded, d413, "Second version.")
+    text, body = overview_body(d413)
+    assert text.count("## Course overview (generated)") == 1 and "First version" not in text and body.strip() == "Second version."
+    assert text.endswith("## What this course covers\n\nMy own words.\n\n## Plan\n\n- read\n")
+    other = catalog.get_course(seeded, "D281")  # a course whose overview note was never written
+    notes_fs.ensure_repo()
+    brain.set_overview(seeded, other, "Hello.")
+    assert notes_fs.read_note(other, "overview")[0].startswith("# D281")
+
+
+def test_write_overview_from_the_notes_needs_no_call_when_analyzed(seeded, d413, fake):
+    brain.analyze(seeded, d413)
+    n = len(fake.prompts)
+    draft = seeded.execute("SELECT * FROM brain_drafts WHERE id = ?", (brain.write_overview(seeded, d413),)).fetchone()
+    assert len(fake.prompts) == n  # the stored analysis was current
+    p = json.loads(draft["payload_json"])
+    assert (p["scope"], p["source"]) == ("overview", "notes") and p["overview"].startswith("**In short.**")
+    result = brain.apply_draft(seeded, d413, draft, FormData([("overview", "1"), ("overview_text", p["overview"] + "\nMy edit.")]))
+    assert result == "Saved the course overview at the top of the Overview note."
+    assert overview_body(d413)[1].strip().endswith("My edit.")
+    assert brain.get_profile(seeded, d413["id"])["status"] == "fresh"  # the generated section isn't "notes changed"
+    notes_fs.write_note(seeded, d413, "notebook", NOTES + "\n## New\nA section added after the analysis, long enough to count.\n")
+    brain.write_overview(seeded, d413)
+    assert fake.prompts[-1].startswith("Analyze") and "Course overview (generated)" not in fake.prompts[-1]
+
+
+def test_write_overview_from_competencies_when_there_are_no_notes(seeded, fake):
+    c = catalog.get_course(seeded, "D281")
+    with pytest.raises(brain.BrainError, match="nothing to write an overview from"):
+        brain.write_overview(seeded, c)
+    competencies.import_list(seeded, c, ["Navigate the Linux file system", "Manage users and permissions", "Write shell scripts"])
+    p = json.loads(seeded.execute("SELECT payload_json FROM brain_drafts WHERE id = ?", (brain.write_overview(seeded, c),)).fetchone()[0])
+    assert p["source"] == "competencies" and fake.prompts[-1].startswith("Here are the competencies")
+    assert "0. Navigate the Linux file system" in fake.prompts[-1]
+    text = p["overview"]
+    assert text.startswith("**In short.** A course about telecom basics.")
+    assert "- **Media**\n  - Navigate the Linux file system" in text  # bad and out-of-range numbers dropped, untitled topic dropped
+    assert "- **Other**\n  - Manage users and permissions\n  - Write shell scripts" in text  # nothing left out
+    assert "before there were notes" in text
+
+
+def test_overview_button_end_to_end(client, fake):
+    conn = db.connect()
+    try:
+        c = catalog.get_course(conn, "D413")
+        notes_fs.ensure_repo()
+        notes_fs.ensure_course_files(conn, c)
+        assert "Write overview" not in client.get("/courses/D413").text  # nothing to write it from yet
+        notes_fs.write_note(conn, c, "notebook", NOTES)
+        page = client.get("/courses/D413").text
+        assert "Write overview</button>" in page and "Reads your notes once first" in page
+        r = client.post("/courses/D413/brain/run", data={"action": "overview"}, follow_redirects=False)
+        assert r.status_code == 303
+        draft_id = wait_done("D413")["draft_id"]
+        assert "A draft is waiting for review" in client.get("/courses/D413").text
+        d = client.get(f"/courses/D413/brain/draft/{draft_id}").text
+        assert "Save overview" in d and "**In short.**" in d and "Study plan" not in d
+        r = client.post(f"/courses/D413/brain/draft/{draft_id}/apply", data={"overview": "1"}, follow_redirects=False)
+        assert "Saved+the+course+overview" in r.headers["location"] or "Saved%20the%20course%20overview" in r.headers["location"]
+        page = client.get("/courses/D413").text
+        assert "Course overview (generated)" in page and "These notes cover transmission media." in page
+        assert "Refresh overview</button>" in page and "Uses the current analysis" in page
+    finally:
+        conn.close()
+
+
+def test_agent_offers_to_write_the_overview(seeded, d413, monkeypatch):
+    k = ctx(seeded)
+    assert "nothing to write an overview from" in call(k, "propose_build_from_notes", code="D281", mode="overview")["error"]
+    out = call(k, "propose_build_from_notes", code="D413", mode="overview")
+    assert out["summary"] == "write the D413 course overview"
+    started = []
+    monkeypatch.setattr(brain, "start", lambda course, kind, depth: started.append((course["code"], kind)))
+    p = seeded.execute("SELECT * FROM agent_proposals WHERE id = ?", (out["proposal_id"],)).fetchone()
+    agent.apply(seeded, p, FormData([]))
+    assert started == [("D413", "overview")]
+
+
+def test_the_overview_heading_is_never_read_as_notes():
+    assert chunks.generated(brain.OVERVIEW_HEADING) and chunks.generated("From my notes · 2026-10-06")
+    assert not chunks.generated("Course overview") and not chunks.generated("From my notes")
+
+
+def test_objectives_only_sections_are_not_overview_topics(seeded, d413, fake):
+    prof = brain.analyze(seeded, d413)
+    text = brain.overview_text(prof, [], {"notebook#wireless"})
+    assert "**Wireless**" not in text and "**Thin spots in my notes**" not in text and "- Define telecomm" in text
+
+
+def test_set_overview_keeps_the_rest_of_the_note_byte_for_byte(seeded, d413):
+    tail = "## What this course covers\n\nMine.\n\n## Plan\n\n"
+    notes_fs.write_note(seeded, d413, "overview", "# D413 · T\n\n" + tail)
+    brain.set_overview(seeded, d413, "One.")
+    brain.set_overview(seeded, d413, "Two.")
+    assert notes_fs.read_note(d413, "overview")[0] == "# D413 · T\n\n## Course overview (generated)\n\nTwo.\n\n" + tail

@@ -25,6 +25,8 @@ BOILERPLATE = {
     "Wrong quiz answers land here automatically. Fill in *Why I missed it*.",
 }
 
+# Headings of text studyvault writes into a course's notes (brain.set_overview; builds before it added a dated summary)
+GENERATED_RE = re.compile(r"^(From my notes · \d{4}-\d{2}-\d{2}|Course overview \(generated\))$")
 HEADING_RE = re.compile(r"^(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
@@ -128,15 +130,27 @@ def where(c) -> str:
 
 # ---------------------------------------------------------------- database
 
+def generated(heading: str) -> bool:
+    """A section studyvault wrote into the notes itself (the course overview, or a build's summary before that). It's about
+    the notes, not part of them, so it never counts as notes."""
+    return bool(GENERATED_RE.match(heading or ""))
+
+
+def _own(rows) -> dict:
+    """{key: hash} of the student's own sections."""
+    return {r["key"]: r["hash"] for r in rows if not generated(r["heading"])}
+
+
 def sync_file(conn, course_id: int, file: str, text: str) -> bool:
     """Make note_chunks match this file's text. Returns True if anything changed (and marks the course's profile stale)."""
     if file not in FILES:
         return False
     new = split(text, file)
-    old = {r["key"]: (r["hash"], r["ord"], r["breadcrumb"]) for r in
-           conn.execute("SELECT key, hash, ord, breadcrumb FROM note_chunks WHERE course_id = ? AND file = ?", (course_id, file))}
-    if old == {c["key"]: (c["hash"], c["ord"], c["breadcrumb"]) for c in new}:
+    rows = conn.execute("SELECT key, hash, ord, breadcrumb, heading FROM note_chunks WHERE course_id = ? AND file = ?",
+                        (course_id, file)).fetchall()
+    if {r["key"]: (r["hash"], r["ord"], r["breadcrumb"]) for r in rows} == {c["key"]: (c["hash"], c["ord"], c["breadcrumb"]) for c in new}:
         return False
+    notes_changed = _own(rows) != _own(new)
     now = clock.now().isoformat()
     with conn:
         keys = [c["key"] for c in new]
@@ -150,7 +164,7 @@ def sync_file(conn, course_id: int, file: str, text: str) -> bool:
                 "text = excluded.text, hash = excluded.hash, chars = excluded.chars, updated_at = excluded.updated_at",
                 (course_id, file, c["key"], c["ord"], c["heading"], c["breadcrumb"], c["level"], c["text"], c["hash"],
                  c["chars"], now))
-        if file in BRAIN_FILES:
+        if file in BRAIN_FILES and notes_changed:  # not when only studyvault's own overview section changed
             conn.execute("UPDATE course_brain SET status = 'stale', updated_at = ? WHERE course_id = ? AND status = 'fresh'",
                          (now, course_id))
     return True
@@ -177,8 +191,8 @@ def ref(conn, course_id: int, key) -> dict | None:
 
 
 def notes_hash(conn, course_id: int) -> str:
-    rows = conn.execute("SELECT file, key, hash FROM note_chunks WHERE course_id = ? AND file IN ('overview','competencies','notebook') "
-                        "ORDER BY file, ord", (course_id,)).fetchall()
+    rows = [r for r in conn.execute("SELECT file, key, hash, heading FROM note_chunks WHERE course_id = ? AND file IN "
+                                    "('overview','competencies','notebook') ORDER BY file, ord", (course_id,)) if not generated(r["heading"])]
     return hashlib.sha1("\n".join(f"{r['file']}|{r['key']}|{r['hash']}" for r in rows).encode()).hexdigest()[:12]
 
 

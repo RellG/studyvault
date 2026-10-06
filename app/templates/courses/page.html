@@ -16,6 +16,21 @@
       <h2>Readiness</h2>
       {{ readiness_detail(ready) }}
     </div>
+    {% if ai_enabled and (brain.sections or n_comps) %}
+    <div class="card" id="write-overview">
+      <h2>Course overview</h2>
+      {% if draft %}
+      <p class="small">A draft is waiting for review. <a href="/courses/{{ course.code }}/brain/draft/{{ draft.id }}">Review it</a> first.</p>
+      {% else %}
+      <p class="small muted">{% if brain.sections %}{{ 'Refreshes' if has_overview else 'Writes' }} a summary of what your notes cover at the top of this page: objectives, main topics (core first), competencies and thin spots.{% if brain.state == 'fresh' %} Uses the current analysis, so it's instant.{% else %} Reads your notes once first (about a minute).{% endif %}
+        {% else %}No notes yet, so it's written from the course's {{ n_comps }} competenc{{ 'y' if n_comps == 1 else 'ies' }}, grouped by topic.{% endif %}
+        You review it before it's saved; the rest of the page is left as it is.</p>
+      <form method="post" action="/courses/{{ course.code }}/brain/run">
+        <button class="button small primary" type="submit" name="action" value="overview">{{ 'Refresh overview' if has_overview else 'Write overview' }}</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if brain.sections %}
     <div class="card">
       <h2>From your notes</h2>

@@ -51,7 +51,7 @@ async def brain_run(request: Request, code: str, conn=Depends(get_db)):
     action = form.get("action")
     if action not in brain.KINDS:
         raise HTTPException(400)
-    if action in ("fill", "refresh") and brain.pending_draft(conn, c["id"]):
+    if action in ("fill", "refresh", "overview") and brain.pending_draft(conn, c["id"]):
         return _page(request, conn, c, error="A draft is waiting for review. Add or dismiss it first, so it isn't replaced.",
                      status_code=409)
     depth = form.get("depth") if form.get("depth") in brain.DEPTHS else "normal"

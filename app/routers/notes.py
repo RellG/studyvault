@@ -50,7 +50,9 @@ def course_page(request: Request, code: str, conn=Depends(get_db)):
     notes_fs.ensure_course_files(conn, c)
     text, _ = notes_fs.read_note(c, "overview")
     return render(request, "courses/page.html", **course_context(conn, c), tab="overview",
-                  html=render_md(conn, text), ready=readiness.for_course(conn, c["id"]), brain=brain.info(conn, c))
+                  html=render_md(conn, text), ready=readiness.for_course(conn, c["id"]), brain=brain.info(conn, c),
+                  n_comps=len(comp.list_for(conn, c["id"])), draft=brain.pending_draft(conn, c["id"]),
+                  has_overview=f"## {brain.OVERVIEW_HEADING}" in text)
 
 
 @router.get("/courses/{code}/notes/{name:path}")

@@ -47,7 +47,7 @@ class BrainError(ai.AIError):
 
 # ---------------------------------------------------------------- the notes, as the model sees them
 
-OWN_SUMMARY_RE = re.compile(r"^From my notes · \d{4}-\d{2}-\d{2}$")  # the heading apply_draft gives the overview summary it adds
+OVERVIEW_HEADING = "Course overview (generated)"   # the Overview note's section that set_overview writes and rewrites
 
 
 def sections(conn, course_id: int) -> list:
@@ -56,7 +56,7 @@ def sections(conn, course_id: int) -> list:
     rows = conn.execute("SELECT * FROM note_chunks WHERE course_id = ? AND file IN ('overview', 'competencies', 'notebook') "
                         "ORDER BY CASE file WHEN 'overview' THEN 0 WHEN 'competencies' THEN 1 ELSE 2 END, ord",
                         (course_id,)).fetchall()
-    return [r for r in rows if r["chars"] >= MIN_SECTION_CHARS and not OWN_SUMMARY_RE.match(r["heading"])]
+    return [r for r in rows if r["chars"] >= MIN_SECTION_CHARS and not chunks.generated(r["heading"])]
 
 
 def is_objectives_only(text: str) -> bool:
@@ -372,13 +372,113 @@ def plan_tasks(course, profile: dict, today=None) -> list[dict]:
     return tasks
 
 
-def overview_text(profile: dict) -> str:
-    lines = [profile["summary"], ""]
-    if profile["objectives"]:
-        lines += ["**Learning objectives**", ""] + [f"- {o}" for o in profile["objectives"]] + [""]
-    lines += ["**Sections**", ""]
-    lines += [f"- **{o['title']}**: {o['summary']}" for o in profile["outline"] if o["summary"]]
-    return "\n".join(lines).strip()
+def overview_text(profile: dict, comps=(), skip=()) -> str:
+    """The Overview note's generated section, from the analysis of the notes: no model call. `comps` = the course's
+    competency list if it has one (else the competencies the analysis suggested). `skip` = keys of sections that only list
+    learning objectives: their objectives are listed, but they aren't topics or thin spots."""
+    out = [f"**In short.** {profile['summary']}"] if profile.get("summary") else []
+    if profile.get("objectives"):
+        out += ["", "**Learning objectives**", ""] + [f"- {o}" for o in profile["objectives"]]
+    topics = sorted((o for o in profile["outline"] if o["summary"] and o["key"] not in skip),
+                    key=lambda o: -o["importance"])  # stable: the notes' order within a level
+    if topics:
+        out += ["", "**What my notes cover** (core exam material first)", ""]
+        for o in topics:
+            terms = f" *Key terms: {', '.join(o['terms'])}.*" if o["terms"] else ""
+            out.append(f"- **{o['title']}**{' (core)' if o['importance'] == 3 else ''}: {o['summary']}{terms}")
+    comp_list = list(comps) or [c["text"] for c in profile.get("competencies", [])]
+    if comp_list:
+        out += ["", "**Competencies**", ""] + [f"- {c}" for c in comp_list]
+    titles = {o["key"]: o["title"] for o in profile["outline"]}
+    thin = [t for t in profile.get("thin_spots", []) if t["why"] and t["key"] not in skip]
+    if thin:
+        out += ["", "**Thin spots in my notes**", ""] + [f"- **{titles.get(t['key'], t['key'])}**: {t['why']}" for t in thin]
+    out += ["", f"*Written by studyvault from my notes on {clock.today().isoformat()}. Use Write overview to refresh it.*"]
+    return "\n".join(out).strip()
+
+
+def _objectives_overview(course, comps: list[str]) -> str:
+    """No notes yet: one model call groups the course's competency list into topics, from what it says only."""
+    listing = "\n".join(f"{i}. {t}" for i, t in enumerate(comps))
+    raw = _object(_call(
+        f"Here are the competencies for {course['code']} {course['title']}, a WGU course. Write a short course overview from "
+        'them. Reply with ONLY a JSON object: {"summary": "3-5 sentences: what the course is about and how the competencies '
+        'fit together", "topics": [{"title": "a short topic name", "competencies": [0-based numbers of the competencies it '
+        'covers]}]} with 2 to 8 topics and every competency in a topic. Use only what the competencies say: no facts, '
+        "tools or exam details they don't mention.\n\n" + listing))
+    out = [f"**In short.** {_str(raw.get('summary'), 1200)}"] if _str(raw.get("summary"), 10) else []
+    placed, groups = set(), []
+    for t in raw.get("topics") or []:
+        if not isinstance(t, dict):
+            continue
+        idx = []
+        for i in t.get("competencies") or []:
+            try:
+                i = int(i)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(comps) and i not in idx:
+                idx.append(i)
+        if idx and _str(t.get("title"), 120):
+            groups.append((_str(t.get("title"), 120), idx))
+            placed.update(idx)
+    if not groups and not out:
+        raise BrainError("The model didn't return an overview I could use. Try again.")
+    left = [i for i in range(len(comps)) if i not in placed]
+    if left:
+        groups.append(("Other", left))
+    out += ["", "**Competencies by topic**", ""]
+    for title, idx in groups:
+        out.append(f"- **{title}**")
+        out += [f"  - {comps[i]}" for i in idx]
+    out += ["", f"*Written by studyvault from the course's competency list on {clock.today().isoformat()}, before there were "
+            "notes. Once you've written notes, use Write overview again to build it from them.*"]
+    return "\n".join(out).strip()
+
+
+def write_overview(conn, course, state: dict | None = None) -> int:
+    """Draft the course overview: from the notes' analysis if there are notes (no model call when it's current), else from
+    the competency list (one call). Saved as a draft for review; set_overview writes it into the Overview note."""
+    rows = sections(conn, course["id"])
+    comps = [r["text"] for r in competencies.list_for(conn, course["id"])]
+    if rows:
+        got = get_profile(conn, course["id"])
+        if got and got["status"] == "fresh":
+            profile = got["profile"]
+            _step(state, "Using the analysis of your notes from earlier.")
+        else:
+            profile = analyze(conn, course, state)
+        skip = {r["key"] for r in rows if is_objectives_only(r["text"])}
+        text, source = overview_text(profile, comps, skip), "notes"
+    elif comps:
+        _step(state, f"Writing an overview from {len(comps)} competencies…")
+        text, source = _objectives_overview(course, comps), "competencies"
+    else:
+        raise BrainError("There's nothing to write an overview from yet: write some notes, or paste the course's competency "
+                         "list on the Competencies tab.")
+    payload = {"summary": "", "scope": "overview", "source": source, "competencies": [], "cards": [], "questions": [], "tasks": [],
+               "overview": text, "hashes": {}, "warnings": []}
+    return _save_draft(conn, course["id"], payload, chunks.notes_hash(conn, course["id"]))
+
+
+def set_overview(conn, course, text: str) -> None:
+    """Write `text` as the Overview note's generated section: replace it if it's there, else add it above the student's own
+    sections. Nothing else in the note changes. Headings inside the text become bold lines, so the section stays one section."""
+    text = re.sub(r"^#{1,6}[ \t]+(.+?)[ \t#]*$", r"**\1**", text.replace("\r\n", "\n").strip(), flags=re.M)
+    block = f"## {OVERVIEW_HEADING}\n\n{text}\n"
+    with notes_fs._write_lock:
+        current, _ = notes_fs.read_note(course, "overview")
+        lines = (current or notes_fs._template(course, "overview")).split("\n")
+        heading = re.compile(r"^#{1,6}[ \t]+\S")
+        start = next((i for i, ln in enumerate(lines) if ln.strip() == f"## {OVERVIEW_HEADING}"), None)
+        if start is not None:
+            end = next((j for j in range(start + 1, len(lines)) if heading.match(lines[j])), len(lines))
+        else:  # above the first section heading (after the title line and the assessment-type line)
+            start = end = next((i for i, ln in enumerate(lines) if i and heading.match(ln)), len(lines))
+        before = "\n".join(lines[:start]).rstrip("\n")
+        after = "\n".join(lines[end:]).lstrip("\n")  # the rest of the note exactly as it was, down to its last newline
+        new = (before + "\n\n" if before else "") + block + ("\n" + after if after else "")
+        notes_fs.write_note(conn, course, "overview", new)
 
 
 def build(conn, course, depth: str = "normal", state: dict | None = None, scope: str = "all") -> int:
@@ -434,7 +534,8 @@ def build(conn, course, depth: str = "normal", state: dict | None = None, scope:
         payload = {"summary": profile["summary"], "scope": "all", "depth": depth,
                    "competencies": [c for c in profile["competencies"] if c["text"].lower() not in existing],
                    "cards": all_cards, "questions": all_qs, "tasks": plan_tasks(course, profile),
-                   "overview": overview_text(profile),
+                   "overview": overview_text(profile, [r["text"] for r in competencies.list_for(conn, course["id"])],
+                                            {r["key"] for r in rows if is_objectives_only(r["text"])}),
                    "hashes": {r["key"]: r["hash"] for r in rows}, "warnings": warnings}
     return _save_draft(conn, course["id"], payload, used_hash)
 
@@ -606,7 +707,7 @@ def pending_draft(conn, course_id: int):
 
 # ---------------------------------------------------------------- background job (one at a time)
 
-KINDS = ("analyze", "build", "fill", "refresh")
+KINDS = ("analyze", "build", "fill", "refresh", "overview")
 _job: dict = {}
 _job_lock = threading.Lock()
 
@@ -620,7 +721,7 @@ def _step(state, text, done=None, of=None):
 
 
 def start(course, kind: str = "build", depth: str = "normal") -> dict:
-    """Begin a job in the background: kind = analyze | build | fill (build for uncovered sections only) | refresh.
+    """Begin a job in the background: kind = analyze | build | fill (build for uncovered sections only) | refresh | overview.
     Raises BrainError if a job is already running."""
     global _job
     if kind not in KINDS:
@@ -645,6 +746,8 @@ def _run(state, code, kind, depth):
             analyze(conn, course, state)
         elif kind == "refresh":
             state["draft_id"] = refresh(conn, course, state)
+        elif kind == "overview":
+            state["draft_id"] = write_overview(conn, course, state)
         else:
             state["draft_id"] = build(conn, course, depth, state, scope="uncovered" if kind == "fill" else "all")
     except ai.AIError as e:
@@ -746,7 +849,7 @@ def apply_draft(conn, course, draft, form) -> str:
     if form.get("overview"):
         text = str(form.get("overview_text") or p["overview"]).strip()
         if text:
-            notes_fs.append_note(conn, course, "overview", f"## From my notes · {clock.today().isoformat()}\n\n{text}\n")
+            set_overview(conn, course, text)
             made["overview"] = 1
     _apply_updates(conn, course, p.get("updates") or {}, form, ticked, made)
     if not any(made.values()):
@@ -755,12 +858,18 @@ def apply_draft(conn, course, draft, form) -> str:
              "tasks": ("task", "tasks")}
     parts = [f"{n} {words[name][n != 1]}" for name, n in made.items() if n and name in words]
     if made["overview"]:
-        parts.append("an overview summary")
+        if p.get("scope") == "overview" and not parts:
+            return _done(conn, draft, "Saved the course overview at the top of the Overview note.")
+        parts.append("the course overview")
     result = " ".join(s for s in (
         ("Added " + ", ".join(parts) + ".") if parts else "",
         f"Updated {made['updated']}." if made["updated"] else "",
         f"Marked {made['confirmed']} still correct." if made["confirmed"] else "",
         f"Deleted {made['removed']}." if made["removed"] else "") if s)
+    return _done(conn, draft, result)
+
+
+def _done(conn, draft, result: str) -> str:
     with conn:
         conn.execute("UPDATE brain_drafts SET status = 'applied', result = ? WHERE id = ?", (result, draft["id"]))
     return result

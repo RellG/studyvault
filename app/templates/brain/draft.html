@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ course.code }} draft from notes · studyvault{% endblock %}
 {% block content %}
-{% set go = 'Apply ticked changes' if p.scope == 'refresh' else 'Add ticked items' %}
+{% set go = {'refresh': 'Apply ticked changes', 'overview': 'Save overview'}.get(p.scope, 'Add ticked items') %}
 {% include "courses/_header.html" %}
 {% include "courses/_tabs.html" %}
 {% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
-<div class="banner amber" role="note">Draft from the model, built from your notes: check each item against them. Nothing is saved until you press <strong>{{ go }}</strong>, and only what's ticked.</div>
+<div class="banner amber" role="note">Draft from the model, built from {{ "the course's competency list" if p.source == 'competencies' else 'your notes' }}: check it against them. Nothing is saved until you press <strong>{{ go }}</strong>, and only what's ticked.</div>
 {% if draft.status != 'pending' %}<div class="banner info" role="status">{{ 'Applied: ' ~ draft.result if draft.status == 'applied' else 'This draft was dismissed.' }} <a href="/courses/{{ course.code }}/brain">Back</a></div>{% endif %}
 {% if changed and draft.status == 'pending' %}<div class="banner amber" role="note">Your notes have changed since this was built. Items link to the text as it was then, so they'll show as out of date if that section changed. You can build again for a fresh draft.</div>{% endif %}
 {% for w in p.warnings %}<div class="banner red" role="note">{{ w }}</div>{% endfor %}
@@ -24,9 +24,15 @@
 
   {% if p.overview %}
   <section class="card" style="margin-top: 1rem">
-    <h2 style="margin-top: 0">Overview summary</h2>
-    <label class="inline"><input type="checkbox" name="overview" value="1" checked> Add this to the end of the Overview note, dated today</label>
-    <details><summary>Edit text</summary><textarea name="overview_text" rows="10">{{ p.overview }}</textarea></details>
+    <h2 style="margin-top: 0">Course overview</h2>
+    {% if p.scope == 'overview' %}
+    <input type="hidden" name="overview" value="1">
+    <p class="small muted">Saved as the <strong>Course overview (generated)</strong> section at the top of the Overview note, replacing the one there if there is one. Your own sections are left as they are. Edit it first if you like.</p>
+    <textarea name="overview_text" rows="18" aria-label="Course overview">{{ p.overview }}</textarea>
+    {% else %}
+    <label class="inline"><input type="checkbox" name="overview" value="1" checked> Save this as the Course overview at the top of the Overview note (replacing the one there)</label>
+    <details><summary>Edit text</summary><textarea name="overview_text" rows="14">{{ p.overview }}</textarea></details>
+    {% endif %}
   </section>
   {% endif %}
 
