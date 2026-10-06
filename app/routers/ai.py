@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai, ai_actions, assessments, cards, clock, competencies as comp, markdown, notes_fs, quizzes
+from .. import ai, ai_actions, assessments, cards, chunks, clock, competencies as comp, markdown, notes_fs, quizzes
 from ..db import get_db
 from ..web import render
 from .notes import course_context, known_codes, load
@@ -76,7 +76,16 @@ async def ai_run(request: Request, code: str, conn=Depends(get_db)):
     rendered = markdown.render(result, known_codes(conn)) if isinstance(result, str) else None
     return render(request, "ai/draft.html", **course_context(conn, c), tab="ai", action=action, label=ACTIONS[action],
                   result=result, rendered=rendered, note=note, comps=comp.list_for(conn, c["id"]),
-                  competency_id=form.get("competency_id", ""), competency=competency)
+                  competency_id=form.get("competency_id", ""), competency=competency,
+                  source=_section_ref(conn, c, str(form.get("section", ""))))
+
+
+def _section_ref(conn, c, section: str):
+    """The notes section a "file|heading" pick refers to, as {key, hash, label}, or None (pasted text, top of file,
+    or a heading that appears twice)."""
+    name, _, heading = section.partition("|")
+    sec = chunks.find(conn, c["id"], name, heading) if name in chunks.BRAIN_FILES else None
+    return chunks.ref(conn, c["id"], sec["key"]) if sec else None
 
 
 def _comp_id(conn, c, value):
@@ -93,12 +102,14 @@ async def ai_accept(request: Request, code: str, conn=Depends(get_db)):
     form = await request.form()
     kind = form.get("kind")
     comp_id = _comp_id(conn, c, form.get("competency_id"))
+    sec = chunks.get(conn, c["id"], form.get("section_key", ""))  # the section the draft was made from, if still there
+    src = {"key": sec["key"], "hash": str(form.get("section_hash") or sec["hash"])} if sec else None
     kept = 0
     if kind == "cards":
         for i in form.getlist("keep"):
             front, back = str(form.get(f"front_{i}", "")).strip(), str(form.get(f"back_{i}", "")).strip()
             if front and back:
-                cards.add(conn, c["id"], front, back, competency_id=comp_id, source="ai-accepted")
+                cards.add(conn, c["id"], front, back, competency_id=comp_id, source="ai-accepted", source_ref=src)
                 kept += 1
         return RedirectResponse(f"/courses/{c['code']}/cards?added={kept}", status_code=303)
     if kind == "questions":
@@ -106,7 +117,7 @@ async def ai_accept(request: Request, code: str, conn=Depends(get_db)):
             try:
                 quizzes.save(conn, c["id"], {"kind": form.get(f"kind_{i}", "mc"), "prompt": form.get(f"prompt_{i}", ""),
                                              "choices": form.get(f"choices_{i}", ""), "explanation": form.get(f"explanation_{i}", ""),
-                                             "competency_id": str(comp_id or "")}, source="ai-accepted")
+                                             "competency_id": str(comp_id or "")}, source="ai-accepted", source_ref=src)
                 kept += 1
             except quizzes.QuestionError:
                 continue  # an edit broke it (e.g. no * left); skip rather than lose the rest

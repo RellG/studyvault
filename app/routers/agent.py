@@ -20,7 +20,8 @@ FILL = ["Explain this differently: ", "Gap-check this competency against my note
 KIND_LABELS = {"cards": "Flashcards", "questions": "Practice questions", "notebook": "Notebook section",
                "confidence": "Competency confidence", "exam": "Exam date", "quiz": "Practice quiz", "study": "Study time",
                "tasks": "Study tasks", "task_update": "Task change", "delete_cards": "Delete flashcards",
-               "edit_cards": "Edit flashcards", "delete_questions": "Delete practice questions"}
+               "edit_cards": "Edit flashcards", "delete_questions": "Delete practice questions",
+               "brain_build": "Build from notes"}
 
 
 def _require_ai():
@@ -161,7 +162,7 @@ async def proposal_apply(request: Request, pid: int, conn=Depends(get_db)):
         _, link = agent.apply(conn, p, form)
     except (agent.ApplyError, ValueError) as e:
         return RedirectResponse(f"/ask/{p['thread_id']}?{urlencode({'error': str(e)})}#p{pid}", status_code=303)
-    if p["kind"] == "quiz":  # the point of this one is to go and take it
+    if p["kind"] in ("quiz", "brain_build"):  # the point of these is to go to the page they lead to
         return RedirectResponse(link, status_code=303)
     return RedirectResponse(f"/ask/{p['thread_id']}#p{pid}", status_code=303)
 

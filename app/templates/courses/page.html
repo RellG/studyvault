@@ -16,6 +16,18 @@
       <h2>Readiness</h2>
       {{ readiness_detail(ready) }}
     </div>
+    {% if brain.sections %}
+    <div class="card">
+      <h2>From your notes</h2>
+      {% if brain.profile %}
+      <p class="small">{{ brain.profile.summary|truncate(260, True, '…') }}</p>
+      <p class="small muted">{{ brain.sections }} sections {% if brain.state == 'stale' %}· <span class="badge amber">notes changed since the analysis</span>{% else %}· analyzed {{ brain.analyzed_at[:10] }}{% endif %}</p>
+      {% else %}
+      <p class="small muted">{{ brain.sections }} sections written. Build cards, questions, competencies and a study plan from them.</p>
+      {% endif %}
+      <a class="button small" href="/courses/{{ course.code }}/brain">{{ 'Open' if brain.profile else 'Build from notes' }}</a>
+    </div>
+    {% endif %}
     {% if not weakest %}
     <div class="card">
       <h2>Get started</h2>

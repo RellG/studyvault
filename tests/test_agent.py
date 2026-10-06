@@ -186,11 +186,16 @@ def test_confidence_and_study_time_proposals(seeded, tid):
 
 def test_every_read_tool_runs_on_seeded_data(seeded, tid):
     k = ctx(seeded, tid)
+    d413 = catalog.get_course(seeded, "D413")
+    notes_fs.ensure_repo()
+    notes_fs.write_note(seeded, d413, "notebook", "## Wi-Fi\nChannels 1, 6 and 11 don't overlap in 2.4 GHz.\n")
     args = {"get_overview": {}, "list_courses": {"term": 1}, "get_course": {"code": "D413"},
             "search_notes": {"query": "cloud"}, "read_note": {"code": "D413", "name": "overview"},
             "list_competencies": {"code": "D413"}, "get_card_stats": {}, "get_quiz_history": {"code": "D413"},
             "get_mistakes": {"code": "D413"}, "get_study_time": {}, "list_certs": {}, "list_tasks": {},
-            "list_flashcards": {"code": "D413"}, "list_questions": {"code": "D413"}}
+            "list_flashcards": {"code": "D413"}, "list_questions": {"code": "D413"},
+            "list_note_sections": {"code": "D413"}, "read_note_section": {"code": "D413", "key": "notebook#wi-fi"},
+            "get_course_brain": {"code": "D413"}}
     assert set(args) == {n for n, t in agent.TOOLS.items() if t["kind"] == "read"}
     for name, a in args.items():
         out = json.loads(agent.run_tool(k, ai.Call("", name, a)))

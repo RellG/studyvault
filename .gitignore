@@ -12,3 +12,5 @@ HANDOFF.md
 WGU_Study_Platform_BUILD_PLAN.md
 seed/courses.yaml
 .deploy.env
+AGENT_BRAIN_REFERENCE.md
+*.patch

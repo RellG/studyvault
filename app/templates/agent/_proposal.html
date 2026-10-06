@@ -12,7 +12,7 @@
   <form method="post" action="/ask/proposals/{{ p.id }}/apply">
     {% set go = 'Apply' %}
     {% if p.kind == 'cards' %}
-      <p class="small muted">Check each card against your notes. Only ticked cards are added.</p>
+      <p class="small muted">Check each card against your notes. Only ticked cards are added.{% if pl.source %} Made from <strong>{{ pl.source.label }}</strong>.{% endif %}</p>
       {% for c in pl.cards %}
       <div class="proposal-item">
         <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
@@ -24,7 +24,7 @@
       {% endfor %}
       {% set go = 'Add kept cards' %}
     {% elif p.kind == 'questions' %}
-      <p class="small muted">Check each question and its answer. Only ticked ones are added; <code>*</code> marks a correct choice.</p>
+      <p class="small muted">Check each question and its answer. Only ticked ones are added; <code>*</code> marks a correct choice.{% if pl.source %} Made from <strong>{{ pl.source.label }}</strong>.{% endif %}</p>
       {% for q in pl.questions %}
       <div class="proposal-item">
         <label class="inline"><input type="checkbox" name="keep" value="{{ loop.index0 }}" checked> Keep</label>
@@ -68,6 +68,17 @@
         <input type="number" id="n{{ p.id }}" name="count" min="1" max="50" value="{{ pl.count }}" class="ask-num">
       </div>
       {% set go = 'Start quiz' %}
+    {% elif p.kind == 'brain_build' %}
+      <p class="small muted">Reads every section of {{ p.code }}'s notes, then drafts competencies, flashcards, practice questions, a study plan and an overview summary from them. It runs in the background for a few minutes; you review the draft on the course's <em>From notes</em> page before anything is added.</p>
+      <div class="row">
+        <label for="bd{{ p.id }}" class="inline">Cards and questions</label>
+        <select id="bd{{ p.id }}" name="depth" class="ask-scope">
+          <option value="light" {{ 'selected' if pl.depth == 'light' }}>Light</option>
+          <option value="normal" {{ 'selected' if pl.depth == 'normal' }}>Normal</option>
+          <option value="thorough" {{ 'selected' if pl.depth == 'thorough' }}>Thorough</option>
+        </select>
+      </div>
+      {% set go = 'Start building' %}
     {% elif p.kind == 'study' %}
       <div class="form-grid">
         <div><label for="sd{{ p.id }}">Date</label><input type="date" id="sd{{ p.id }}" name="date" value="{{ pl.date }}"></div>

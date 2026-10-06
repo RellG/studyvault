@@ -25,6 +25,7 @@ It was built for the B.S. Cloud & Network Engineering – AWS program, but the c
 | **Themes** | Notebook (default; Google Sans, soft blue panels, pill buttons), Sage and Paper, each with light and dark, plus System / Light / Dark; chosen in Settings and stored server-side so every device matches |
 | **Search** | SQLite FTS5 across notes, flashcards and questions, filterable by term and course |
 | **AI assist (optional)** | Notes → flashcards, notes → practice questions, explain differently, gap check. Anthropic or Google via env config; everything comes back as a draft you accept or discard; only the text you select is sent; never used to write performance assessments |
+| **Build from notes** | Each course's notes are cut into sections by heading. **Notes → From notes** analyzes them once (summary, outline, objectives, competencies, thin spots) and builds a draft of competencies, flashcards, practice questions, a study plan and an overview summary from what the notes say. You review and tick; nothing is added until you press Add. Items remember the section they came from and show as stale if it changes. The Ask agent can read whole notebooks by section and start a build |
 | **Backup & export** | Nightly SQLite backup + notes/attachments archives with checksums, 14 kept locally, each copied off-device over ssh and verified; tested restore script; course export to one markdown file or a print-to-PDF page |
 
 ## Run it

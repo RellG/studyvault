@@ -112,6 +112,26 @@ def flashcards(notes: str, n: int = 0, fill: bool = False, course: str = "") -> 
     return out, _cut_note(cut_off, len(out), "cards")
 
 
+def clean_question(q, fill: bool = False) -> dict | None:
+    """One model-written question as the app stores it, or None if it isn't usable (too few choices, bad indexes…)."""
+    if not isinstance(q, dict):
+        return None
+    choices = [str(c).strip() for c in q.get("choices") or [] if str(c).strip()]
+    try:
+        correct = sorted({int(i) for i in q.get("correct") or []})
+    except (TypeError, ValueError):
+        return None
+    prompt = str(q.get("prompt", "")).strip()
+    if not prompt or len(choices) < 2 or not correct or any(not 0 <= i < len(choices) for i in correct):
+        return None
+    kind = "multi" if len(correct) > 1 or q.get("kind") == "multi" else "mc"
+    return {"kind": kind, "prompt": prompt, "choices": choices, "correct": correct,
+            "explanation": str(q.get("explanation", "")).strip(),
+            "general": fill and str(q.get("source", "")).strip().lower() != "notes",
+            # editable text form: correct choices start with '*', same as the manual question form
+            "choices_text": "\n".join(("* " if i in correct else "") + c for i, c in enumerate(choices))}
+
+
 def questions(notes: str, n: int = 0, fill: bool = False, course: str = "") -> tuple[list[dict], str | None]:
     """Draft practice questions: up to `n` (0 = 10), at most MAX_QUESTIONS. `fill` as for flashcards()."""
     notes = _clip(notes)
@@ -124,24 +144,7 @@ def questions(notes: str, n: int = 0, fill: bool = False, course: str = "") -> t
               'Reply with only a JSON array like [{"kind": "mc" or "multi", "prompt": "...", "choices": ["..."], '
               f'"correct": [0], "explanation": "..."{source}}}].')
     items, cut_off = _json_items(_bulk(f"{prompt}\n\n<notes>\n{notes}\n</notes>", SYSTEM_FILL if fill else SYSTEM))
-    out = []
-    for q in items:
-        if not isinstance(q, dict):
-            continue
-        choices = [str(c).strip() for c in q.get("choices") or [] if str(c).strip()]
-        try:
-            correct = sorted({int(i) for i in q.get("correct") or []})
-        except (TypeError, ValueError):
-            continue
-        prompt = str(q.get("prompt", "")).strip()
-        if not prompt or len(choices) < 2 or not correct or any(not 0 <= i < len(choices) for i in correct):
-            continue
-        kind = "multi" if len(correct) > 1 or q.get("kind") == "multi" else "mc"
-        out.append({"kind": kind, "prompt": prompt, "choices": choices, "correct": correct,
-                    "explanation": str(q.get("explanation", "")).strip(),
-                    "general": fill and str(q.get("source", "")).strip().lower() != "notes",
-                    # editable text form: correct choices start with '*', same as the manual question form
-                    "choices_text": "\n".join(("* " if i in correct else "") + c for i, c in enumerate(choices))})
+    out = [q for q in (clean_question(x, fill) for x in items) if q]
     if not out:
         raise ActionError("The model returned no usable questions.")
     out = out[:limit]

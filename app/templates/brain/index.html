@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} from notes · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+{% if request.query_params.get('applied') %}<div class="banner green" role="status">{{ request.query_params.get('applied') }}</div>{% endif %}
+{% if course.assessment_type == 'PA' %}<div class="banner info" role="note"><strong>PA drafts are never read.</strong> Only your Overview, Competencies and Notebook notes are used.</div>{% endif %}
+
+{% if running %}
+<section class="card" id="job" aria-live="polite" data-code="{{ course.code }}">
+  <h2>Working on {{ course.code }}…</h2>
+  <p class="thinking-line"><span class="dots"></span> <span id="job-step">{{ job.step }}</span> <span class="muted small" id="job-secs">{{ job.seconds }}s</span></p>
+  <p class="small muted">This takes a few minutes: the free Gemini tier allows 5 requests a minute, so the app spaces them out. You can leave this page; the draft will be waiting here.</p>
+</section>
+{% elif draft %}
+<div class="banner info" role="status">A draft built from your notes is ready to review (made {{ draft.created_at[:16]|replace('T', ' ') }}).
+  <a class="button small primary" href="/courses/{{ course.code }}/brain/draft/{{ draft.id }}">Review draft</a></div>
+{% endif %}
+
+<section class="cols main-side">
+  <div class="stack">
+    <div class="card">
+      <h2 style="margin-top: 0">What your notes cover</h2>
+      {% if info.profile %}
+      <p>{{ info.profile.summary }}</p>
+      {% if info.profile.objectives %}<details><summary>Learning objectives ({{ info.profile.objectives|length }})</summary>
+        <ul>{% for o in info.profile.objectives %}<li>{{ o }}</li>{% endfor %}</ul></details>{% endif %}
+      {% if info.profile.topic_lists %}<details><summary>Topic lists to learn</summary>
+        {% for t in info.profile.topic_lists %}<p class="small"><strong>{{ t.where }}:</strong> {{ t.terms|join(', ') }}</p>{% endfor %}</details>{% endif %}
+      {% elif info.sections %}
+      <p class="muted">Not analyzed yet. Analyzing reads all {{ info.sections }} sections once and works out what they cover.</p>
+      {% else %}
+      <p class="muted">No notes to work from yet. Write in the <a href="/courses/{{ course.code }}/notes/notebook">Notebook</a>; each heading becomes a section.</p>
+      {% endif %}
+    </div>
+
+    {% if rows %}
+    <div class="card">
+      <h2 style="margin-top: 0">Sections <span class="muted small">({{ rows|length }})</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Section</th><th class="nowrap">Size</th><th>Cards</th><th>Questions</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a href="/courses/{{ course.code }}/notes/{{ r.file }}">{{ r.title or r.where }}</a>
+            {% if r.importance == 3 %}<span class="badge accent" title="Core exam material">core</span>{% endif %}
+            {% if r.summary %}<div class="small muted">{{ r.summary }}</div>{% endif %}
+            {% if r.thin %}<div class="small"><span class="badge amber">thin</span> {{ r.thin }}</div>{% endif %}</td>
+          <td class="nowrap small muted">{{ '{:,}'.format(r.chars) }}</td>
+          <td>{{ r.cards or '—' }}</td><td>{{ r.questions or '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+      <p class="small muted">Cards and questions made from a section are counted here. Items you wrote by hand aren't linked to a section.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <aside class="stack">
+    <div class="card">
+      <h2 style="margin-top: 0">Analysis</h2>
+      {% if info.state == 'fresh' %}<p><span class="badge green">Up to date</span></p>
+      {% elif info.state == 'stale' %}<p><span class="badge amber">Notes changed</span> <span class="small muted">since {{ info.analyzed_at[:10] }}</span></p>
+      {% else %}<p><span class="badge">Not analyzed</span></p>{% endif %}
+      <p class="small muted">{{ info.sections }} sections · {{ '{:,}'.format(info.chars) }} characters. Only these notes are sent to the AI service; PA drafts and your mistake log are not.</p>
+      {% if ai_enabled and info.sections and not running %}
+      {% if other %}<p class="small muted">{{ other }} is being worked on; the free tier handles one job at a time.</p>
+      {% else %}
+      <form method="post" action="/courses/{{ course.code }}/brain/run" class="stack">
+        <label for="depth">Cards and questions</label>
+        <select id="depth" name="depth">
+          <option value="light">Light: about half</option>
+          <option value="normal" selected>Normal</option>
+          <option value="thorough">Thorough: about 1½×</option>
+        </select>
+        <div class="actions">
+          <button class="primary" type="submit" name="action" value="build">Build from notes</button>
+          <button type="submit" name="action" value="analyze">Analyze only</button>
+        </div>
+        <p class="small muted">Build analyzes if needed, then drafts competencies, cards, questions and a study plan from your notes. Nothing is added until you review it and press Apply.</p>
+      </form>
+      {% endif %}
+      {% elif not ai_enabled %}<p class="small muted">AI is off, so there's nothing to run. The section list above still works.</p>{% endif %}
+    </div>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+{% if running %}
+<script>
+(function () {
+  var box = document.getElementById("job"); if (!box) return;
+  var step = document.getElementById("job-step"), secs = document.getElementById("job-secs");
+  function poll() {
+    fetch("/courses/" + box.dataset.code + "/brain/progress").then(function (r) { return r.json(); }).then(function (p) {
+      if (p.done) { location.reload(); return; }
+      step.textContent = p.step; secs.textContent = p.seconds + "s";
+      setTimeout(poll, 3000);
+    }).catch(function () { setTimeout(poll, 6000); });
+  }
+  setTimeout(poll, 3000);
+})();
+</script>
+{% endif %}
+{% endblock %}

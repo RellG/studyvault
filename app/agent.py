@@ -10,7 +10,7 @@ import logging
 import re
 import time
 
-from . import ai, assessments, cards, catalog, clock, competencies as comp, notes_fs, progress, quizzes, readiness
+from . import ai, assessments, brain, cards, catalog, chunks, clock, competencies as comp, notes_fs, progress, quizzes, readiness
 from . import tasks as study_tasks
 from .config import settings
 
@@ -133,6 +133,7 @@ def get_course(ctx, code):
     conn = ctx.conn
     c = _course(conn, code)
     r = readiness.for_course(conn, c["id"])
+    secs = chunks.outline(conn, c["id"])
     out = {"course": _pick(c, "code", "title", "cu", "term_n", "status", "assessment_type", "start", "due", "target",
                            "exam_date", "quiz_target", "cert_name", "passed_on"),
            "readiness": {"score": r["score"], "parts_percent": {r["labels"][k]: None if v is None else round(100 * v)
@@ -144,7 +145,8 @@ def get_course(ctx, code):
                               for p in assessments.preassessments(conn, c["id"])[:5]],
            "cards": {"total": conn.execute("SELECT COUNT(*) FROM cards WHERE course_id = ?", (c["id"],)).fetchone()[0],
                      "due": cards.due_count(conn, c["id"])},
-           "question_bank": len(quizzes.bank(conn, c["id"]))}
+           "question_bank": len(quizzes.bank(conn, c["id"])),
+           "notes": {"sections": len(secs), "chars": sum(x["chars"] for x in secs)}}
     if c["assessment_type"] == "PA":
         out["pa_tasks"] = {row[0]: row[1] for row in conn.execute(
             "SELECT status, COUNT(*) FROM pa_tasks WHERE course_id = ? GROUP BY status", (c["id"],))}
@@ -166,7 +168,7 @@ def search_notes(ctx, query, code=None):
 
 @tool("read_note", "read", "notes",
       "Read one of a course's note files: overview, competencies, notebook or mistakes. Give `section` (a ## heading) "
-      "to read just that part. Long files are cut off and list their section headings.",
+      "to read just that part. Long files are cut off: for the whole thing use list_note_sections, then read_note_section.",
       {"code": CODE, "name": {"type": "string", "enum": READABLE_NOTES},
        "section": {"type": "string", "description": "A ## heading in that file (optional)"}}, ["code", "name"])
 def read_note(ctx, code, name, section=None):
@@ -182,8 +184,64 @@ def read_note(ctx, code, name, section=None):
         text = f"## {match}\n{secs[match]}"
     out = {"link": f"/courses/{c['code']}/notes/{name}", "text": text.strip() or "(empty)"}
     if len(text) > NOTE_CHARS:
-        out.update(text=text[:NOTE_CHARS], truncated=True, sections=[h for h in secs if h])
+        out.update(text=text[:NOTE_CHARS], truncated=True, sections=[h for h in secs if h],
+                   hint="Cut off. Use list_note_sections and read_note_section to read all of it.")
     return out
+
+
+@tool("list_note_sections", "read", "note sections",
+      "A course's notes cut into sections, each with a `key`, where it sits (heading path), its size, and how many "
+      "flashcards and questions were made from it. Shows everything the notes cover, which read_note can't for long "
+      "files. Then read a section with read_note_section. Default: overview, competencies and notebook.",
+      {"code": CODE, "name": {"type": "string", "enum": READABLE_NOTES, "description": "One file only (optional)"}},
+      ["code"])
+def list_note_sections(ctx, code, name=None):
+    c = _course(ctx.conn, code)
+    if name and name not in READABLE_NOTES:
+        raise ToolError("name must be overview, competencies, notebook or mistakes.")
+    rows = chunks.outline(ctx.conn, c["id"], (name,) if name else chunks.BRAIN_FILES)
+    if not rows:
+        return {"sections": [], "note": "No notes written in this course yet."}
+    return {"sections": [{"key": r["key"], "where": r["breadcrumb"] or "(top of file)", "chars": r["chars"],
+                          "cards": r["cards"], "questions": r["questions"]} for r in rows],
+            "total_chars": sum(r["chars"] for r in rows),
+            "made_from_sections": chunks.freshness(ctx.conn, c["id"])}
+
+
+@tool("read_note_section", "read", "note section",
+      "Read one section of a course's notes in full, by its `key` from list_note_sections.",
+      {"code": CODE, "key": {"type": "string", "description": "A key from list_note_sections"}}, ["code", "key"])
+def read_note_section(ctx, code, key):
+    c = _course(ctx.conn, code)
+    sec = chunks.get(ctx.conn, c["id"], key)
+    if not sec:
+        raise ToolError(f"No section “{key}” in {c['code']}. Call list_note_sections for the keys.")
+    return {"key": sec["key"], "where": chunks.where(sec), "link": f"/courses/{c['code']}/notes/{sec['file']}",
+            "text": sec["text"]}
+
+
+@tool("get_course_brain", "read", "what the notes cover",
+      "What a course's notes cover, worked out from the notes themselves: a summary, the learning objectives, every section "
+      "with a one-line summary, its importance, how many cards and questions were made from it, thin spots, and any lists "
+      "of topics to learn. Says if the notes haven't been analyzed yet or have changed since.",
+      {"code": CODE}, ["code"])
+def get_course_brain(ctx, code):
+    c = _course(ctx.conn, code)
+    i = brain.info(ctx.conn, c)
+    if not i["sections"]:
+        return {"analyzed": False, "note": "No notes written in this course yet."}
+    if not i["profile"]:
+        return {"analyzed": False, "sections": i["sections"], "note": "The notes haven't been analyzed yet. Use "
+                "list_note_sections and read_note_section to read them, or offer propose_build_from_notes."}
+    prof = i["profile"]
+    counts = {o["key"]: o for o in chunks.outline(ctx.conn, c["id"])}
+    thin = {t["key"]: t["why"] for t in prof["thin_spots"]}
+    return {"analyzed": True, "up_to_date": i["state"] == "fresh", "analyzed_on": i["analyzed_at"][:10],
+            "summary": prof["summary"], "objectives": prof["objectives"], "competencies": [x["text"] for x in prof["competencies"]],
+            "sections": [{**_pick(o, "key", "title", "summary", "importance"), "cards": counts.get(o["key"], {}).get("cards", 0),
+                          "questions": counts.get(o["key"], {}).get("questions", 0), "thin": thin.get(o["key"])}
+                         for o in prof["outline"]],
+            "topic_lists": [{"where": t["where"], "terms": t["terms"][:40]} for t in prof["topic_lists"]]}
 
 
 @tool("list_competencies", "read", "competencies",
@@ -309,35 +367,51 @@ def _text(value, field, limit):
     return s[:limit]
 
 
+SECTION = {"type": "string", "description": "Key from list_note_sections of the notes section these come from "
+                                           "(optional, but set it when they come from one section)"}
+
+
+def _section(conn, course, key):
+    """{key, hash, label} for a notes section, or None if no key was given."""
+    if not key:
+        return None
+    r = chunks.ref(conn, course["id"], key)
+    if not r:
+        raise ToolError(f"No section “{key}” in {course['code']}. Call list_note_sections for the keys.")
+    return r
+
+
 @tool("add_flashcards", "write", "proposed flashcards",
       "Propose flashcards for a course (the student reviews, edits and applies them). One fact per card, short answers. "
       f"Up to {MAX_CARDS} cards per call; for more, call it again in the same step.",
-      {"code": CODE, "competency_id": COMP,
+      {"code": CODE, "competency_id": COMP, "section_key": SECTION,
        "cards": {"type": "array", "description": f"Up to {MAX_CARDS} cards", "items": {"type": "object", "properties": {
            "front": {"type": "string"}, "back": {"type": "string"}}, "required": ["front", "back"]}}},
       ["code", "cards"])
-def add_flashcards(ctx, code, cards, competency_id=None):
+def add_flashcards(ctx, code, cards, competency_id=None, section_key=None):
     c = _course(ctx.conn, code)
+    src = _section(ctx.conn, c, section_key)
     items = [{"front": str(x.get("front", "")).strip()[:1000], "back": str(x.get("back", "")).strip()[:2000]}
              for x in (cards if isinstance(cards, list) else []) if isinstance(x, dict)]
     items = [x for x in items if x["front"] and x["back"]][:MAX_CARDS]
     if not items:
         raise ToolError("No usable cards: each needs a front and a back.")
-    return _propose(ctx, "cards", c, {"cards": items, "competency_id": _comp_id(ctx.conn, c, competency_id)},
-                    f"{len(items)} flashcards for {c['code']}")
+    return _propose(ctx, "cards", c, {"cards": items, "competency_id": _comp_id(ctx.conn, c, competency_id), "source": src},
+                    f"{len(items)} flashcards for {c['code']}" + (f" from “{src['label']}”" if src else ""))
 
 
 @tool("add_questions", "write", "proposed questions",
       "Propose practice questions for a course's question bank, WGU objective-assessment style. Each has 2-6 "
       "choices and the 0-based indexes of the correct ones (more than one = select all that apply).",
-      {"code": CODE, "competency_id": COMP,
+      {"code": CODE, "competency_id": COMP, "section_key": SECTION,
        "questions": {"type": "array", "description": "Up to 20 questions", "items": {"type": "object", "properties": {
            "prompt": {"type": "string"}, "choices": {"type": "array", "items": {"type": "string"}},
            "correct": {"type": "array", "items": {"type": "integer"}}, "explanation": {"type": "string"}},
            "required": ["prompt", "choices", "correct"]}}},
       ["code", "questions"])
-def add_questions(ctx, code, questions, competency_id=None):
+def add_questions(ctx, code, questions, competency_id=None, section_key=None):
     c = _course(ctx.conn, code)
+    src = _section(ctx.conn, c, section_key)
     out = []
     for q in questions if isinstance(questions, list) else []:
         if not isinstance(q, dict):
@@ -355,8 +429,9 @@ def add_questions(ctx, code, questions, competency_id=None):
                     "choices_text": "\n".join(("* " if i in correct else "") + ch for i, ch in enumerate(choices))})
     if not out:
         raise ToolError("No usable questions: each needs a prompt, 2+ choices and valid correct indexes.")
-    return _propose(ctx, "questions", c, {"questions": out[:20], "competency_id": _comp_id(ctx.conn, c, competency_id)},
-                    f"{len(out[:20])} practice questions for {c['code']}")
+    return _propose(ctx, "questions", c, {"questions": out[:20], "competency_id": _comp_id(ctx.conn, c, competency_id),
+                                          "source": src},
+                    f"{len(out[:20])} practice questions for {c['code']}" + (f" from “{src['label']}”" if src else ""))
 
 
 @tool("list_flashcards", "read", "flashcard list",
@@ -630,6 +705,22 @@ def propose_task_update(ctx, task_id, status=None, due_on=None, priority=None, t
                     f"change task “{t['title'][:60]}”")
 
 
+@tool("propose_build_from_notes", "write", "proposed build from notes",
+      "Offer to set a course up from its own notes: it reads every section, then drafts competencies, flashcards, practice "
+      "questions, a study plan and an overview summary, all from what the notes say. It runs in the background and takes a "
+      "few minutes (the student's free AI tier is rate-limited); the student reviews the draft on the course's From notes "
+      "page before anything is added. Use this when asked to set up, populate or fill in a course from its notes, instead "
+      "of writing all of it yourself. Optional depth: light, normal or thorough.",
+      {"code": CODE, "depth": {"type": "string", "enum": list(brain.DEPTHS), "description": "How many cards and questions"}},
+      ["code"])
+def propose_build_from_notes(ctx, code, depth="normal"):
+    c = _course(ctx.conn, code)
+    if not brain.sections(ctx.conn, c["id"]):
+        raise ToolError(f"{c['code']} has no notes to build from yet. Ask the student to write some in the Notebook.")
+    depth = depth if depth in brain.DEPTHS else "normal"
+    return _propose(ctx, "brain_build", c, {"depth": depth}, f"build {c['code']} from its notes ({depth})")
+
+
 # ---------------------------------------------------------------- memory: saved at once (it's the agent's own notes
 # about the student, not their data), shown in the chat and on /ask/memory, where the student can delete any of it
 
@@ -719,8 +810,8 @@ def run_tool(ctx, call: ai.Call) -> str:
             log.exception("agent tool %s failed", call.name)
             result = {"error": "That action failed inside studyvault."}
     text = json.dumps(result, default=str, ensure_ascii=False)
-    limit = (NOTE_CHARS + 500 if call.name in ("read_note", "get_mistakes") else
-             LIST_CHARS if call.name in ("list_flashcards", "list_questions") else RESULT_CHARS)
+    limit = (NOTE_CHARS + 500 if call.name in ("read_note", "get_mistakes", "read_note_section") else
+             LIST_CHARS if call.name in ("list_flashcards", "list_questions", "list_note_sections", "get_course_brain") else RESULT_CHARS)
     return text if len(text) <= limit else text[:limit] + "…(truncated)"
 
 
@@ -743,6 +834,8 @@ SYSTEM = """You are the study agent inside studyvault, a private study notebook 
 How to work:
 - Facts about the student's own courses, notes, flashcards, quizzes, progress, dates and schedule come only from your tools. Look them up; never guess them. If a lookup is empty, say so.
 - Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
+- The student's notes are the source for their course material. A long notebook is cut off by read_note: list_note_sections shows every section with a key, and read_note_section reads one in full. When you write flashcards or questions from the notes, read the section first, base them on what it says, and pass its `section_key` so each item is linked to where it came from. Where you add anything the notes don't state, say so; if the notes don't cover something the student asks about, say that and offer to propose a notebook section.
+- To set a course up from its notes (competencies, cards, questions, a study plan), use propose_build_from_notes: it reads all the notes and drafts everything for the student to review, which you can't do within your lookup limit. get_course_brain tells you what the notes cover and what's still missing.
 - For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
 - Changes (adding, editing or deleting flashcards; adding or deleting questions; notebook sections, confidence ratings, exam dates, quizzes, study time, study tasks) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added. To edit or delete, look the items up first (list_flashcards / list_questions) and pass their ids; use all=true only when the student asks for everything. Never say you can't edit or delete cards or questions.
 - When the student gives you a list (topics to learn, terms from a pre-assessment, missed questions), cover EVERY item: at least one flashcard per term, more where a term has two things worth knowing. Fill in answers from your own knowledge where their notes have none. A long list takes several add_flashcards calls in the same step, so make them all at once. Then say how many cards you proposed and name any item you left out and why.
@@ -759,7 +852,7 @@ def system_prompt(conn, thread) -> str:
         c = conn.execute("SELECT code, title FROM courses WHERE id = ?", (thread["course_id"],)).fetchone()
         if c:
             scope = (f"\nThis chat was opened from course {c['code']} ({c['title']}): assume questions are about it "
-                     "unless the student says otherwise.")
+                     "unless the student says otherwise." + brain.prompt_block(conn, thread["course_id"]))
     today = clock.today()
     return SYSTEM.format(today=today.isoformat(), weekday=today.strftime("%A"), scope=scope) + _memory_block(conn)
 
@@ -893,7 +986,7 @@ def apply(conn, p, form) -> tuple[str, str | None]:
         for i in form.getlist("keep"):
             front, back = str(form.get(f"front_{i}", "")).strip(), str(form.get(f"back_{i}", "")).strip()
             if front and back:
-                cards.add(conn, c["id"], front, back, competency_id=cid, source="ai-accepted")
+                cards.add(conn, c["id"], front, back, competency_id=cid, source="ai-accepted", source_ref=payload.get("source"))
                 added += 1
         if not added:
             raise ApplyError("Keep at least one card, or press Dismiss.")
@@ -905,7 +998,8 @@ def apply(conn, p, form) -> tuple[str, str | None]:
                 quizzes.save(conn, c["id"], {"kind": form.get(f"kind_{i}", "mc"), "prompt": form.get(f"prompt_{i}", ""),
                                              "choices": form.get(f"choices_{i}", ""),
                                              "explanation": form.get(f"explanation_{i}", ""),
-                                             "competency_id": str(cid or "")}, source="ai-accepted")
+                                             "competency_id": str(cid or "")}, source="ai-accepted",
+                             source_ref=payload.get("source"))
                 saved += 1
             except quizzes.QuestionError:
                 continue  # an edit broke it; keep the rest
@@ -939,6 +1033,13 @@ def apply(conn, p, form) -> tuple[str, str | None]:
         except assessments.AssessmentError as e:
             raise ApplyError(str(e))
         result, link = f"{c['code']} exam set for {form.get('date')}.", f"{base}/assessment"
+    elif kind == "brain_build":
+        try:
+            brain.start(c, "build", str(form.get("depth") or payload.get("depth") or "normal"))
+        except ai.AIError as e:
+            raise ApplyError(str(e))
+        result = f"Started building {c['code']} from its notes. It takes a few minutes; the draft will be waiting on its From notes page."
+        link = f"{base}/brain"
     elif kind == "quiz":
         try:
             count = max(1, min(50, int(form.get("count") or payload["count"])))

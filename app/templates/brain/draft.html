@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ course.code }} draft from notes · studyvault{% endblock %}
+{% block content %}
+{% include "courses/_header.html" %}
+{% include "courses/_tabs.html" %}
+{% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
+<div class="banner amber" role="note">Draft from the model, built from your notes: check each item against them. Nothing is saved until you press <strong>Add ticked items</strong>, and only what's ticked.</div>
+{% if draft.status != 'pending' %}<div class="banner info" role="status">{{ 'Applied: ' ~ draft.result if draft.status == 'applied' else 'This draft was dismissed.' }} <a href="/courses/{{ course.code }}/brain">Back</a></div>{% endif %}
+{% if changed and draft.status == 'pending' %}<div class="banner amber" role="note">Your notes have changed since this was built. Items link to the text as it was then, so they'll show as out of date if that section changed. You can build again for a fresh draft.</div>{% endif %}
+{% for w in p.warnings %}<div class="banner red" role="note">{{ w }}</div>{% endfor %}
+<p>{{ p.summary }}</p>
+
+<form method="post" action="/courses/{{ course.code }}/brain/draft/{{ draft.id }}/apply">
+  {% if p.competencies %}
+  <section class="card">
+    <h2 style="margin-top: 0">Competencies <span class="muted small">({{ p.competencies|length }} new)</span></h2>
+    <p class="small muted">Added to the Competencies tab, where you rate your confidence. Cards and questions from the same sections are linked to them.</p>
+    {% for c in p.competencies %}
+    <div class="row" style="flex-wrap: nowrap"><input type="checkbox" name="comp" value="{{ loop.index0 }}" checked aria-label="Keep"><input type="text" name="comptext_{{ loop.index0 }}" value="{{ c.text }}"></div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <section class="card" style="margin-top: 1rem">
+    <h2 style="margin-top: 0">Overview summary</h2>
+    <label class="inline"><input type="checkbox" name="overview" value="1" checked> Add this to the end of the Overview note, dated today</label>
+    <details><summary>Edit text</summary><textarea name="overview_text" rows="10">{{ p.overview }}</textarea></details>
+  </section>
+
+  <section class="card" style="margin-top: 1rem">
+    <h2 style="margin-top: 0">Study plan <span class="muted small">({{ p.tasks|length }} tasks)</span></h2>
+    <p class="small muted">Added to this course's Tasks. The card and quiz tasks close themselves when you actually review and take a quiz.</p>
+    {% for t in p.tasks %}
+    <div class="row" style="flex-wrap: nowrap"><input type="checkbox" name="task" value="{{ loop.index0 }}" checked aria-label="Keep">
+      <input type="text" name="title_{{ loop.index0 }}" value="{{ t.title }}">
+      <input type="date" name="due_{{ loop.index0 }}" value="{{ t.due_on or '' }}" aria-label="Due date" style="width: 11rem"></div>
+    {% endfor %}
+  </section>
+
+  {% if card_groups %}
+  <h2>Flashcards <span class="muted small">({{ p.cards|length }})</span></h2>
+  {% for g in card_groups %}
+  <section class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" data-tick checked> <strong>{{ g.label }}</strong> <span class="muted small">({{ g['items']|length }})</span></label>
+    {% for i, c in g['items'] %}
+    <div class="proposal-item">
+      <label class="inline"><input type="checkbox" name="card" value="{{ i }}" checked> Keep</label>
+      {% if c.general %}<span class="badge amber" title="Not in your notes: the answer comes from the model's own knowledge">Check</span>{% endif %}
+      <div class="form-grid">
+        <div><label>Front</label><textarea name="front_{{ i }}" rows="2">{{ c.front }}</textarea></div>
+        <div><label>Back</label><textarea name="back_{{ i }}" rows="2">{{ c.back }}</textarea></div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  {% endif %}
+
+  {% if question_groups %}
+  <h2>Practice questions <span class="muted small">({{ p.questions|length }})</span></h2>
+  {% for g in question_groups %}
+  <section class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" data-tick checked> <strong>{{ g.label }}</strong> <span class="muted small">({{ g['items']|length }})</span></label>
+    {% for i, q in g['items'] %}
+    <div class="proposal-item">
+      <label class="inline"><input type="checkbox" name="question" value="{{ i }}" checked> Keep</label>
+      {% if q.general %}<span class="badge amber" title="Not in your notes: the answer comes from the model's own knowledge">Check</span>{% endif %}
+      <input type="hidden" name="kind_{{ i }}" value="{{ q.kind }}">
+      <label>Question ({{ 'select all that apply' if q.kind == 'multi' else 'one answer' }})</label>
+      <textarea name="prompt_{{ i }}" rows="2">{{ q.prompt }}</textarea>
+      <label>Choices (<code>*</code> marks correct)</label>
+      <textarea name="choices_{{ i }}" rows="4">{{ q.choices_text }}</textarea>
+      <label>Explanation</label>
+      <textarea name="explanation_{{ i }}" rows="2">{{ q.explanation }}</textarea>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  {% endif %}
+
+  {% if draft.status == 'pending' %}
+  <div class="actions">
+    <button class="primary" type="submit">Add ticked items</button>
+    <button class="button" type="submit" formaction="/courses/{{ course.code }}/brain/draft/{{ draft.id }}/dismiss">Dismiss draft</button>
+  </div>
+  {% endif %}
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener("change", function (e) {
+  if (!e.target.matches("[data-tick]")) return;
+  e.target.closest("section").querySelectorAll("input[name=card], input[name=question]").forEach(function (c) { c.checked = e.target.checked; });
+});
+</script>
+{% endblock %}

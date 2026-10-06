@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from .. import cards, catalog, clock, markdown, notes_fs, readiness, tasks
+from .. import brain, cards, catalog, clock, markdown, notes_fs, readiness, tasks
 from .. import competencies as comp
 from ..config import settings
 from ..db import get_db
@@ -50,7 +50,7 @@ def course_page(request: Request, code: str, conn=Depends(get_db)):
     notes_fs.ensure_course_files(conn, c)
     text, _ = notes_fs.read_note(c, "overview")
     return render(request, "courses/page.html", **course_context(conn, c), tab="overview",
-                  html=render_md(conn, text), ready=readiness.for_course(conn, c["id"]))
+                  html=render_md(conn, text), ready=readiness.for_course(conn, c["id"]), brain=brain.info(conn, c))
 
 
 @router.get("/courses/{code}/notes/{name:path}")

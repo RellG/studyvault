@@ -9,6 +9,11 @@
 
 <form method="post" action="/courses/{{ course.code }}/ai/accept">
   <input type="hidden" name="competency_id" value="{{ competency_id }}">
+  {% if source and action in ('cards', 'questions') %}
+  <input type="hidden" name="section_key" value="{{ source.key }}">
+  <input type="hidden" name="section_hash" value="{{ source.hash }}">
+  <p class="small muted">Made from your notes section <strong>{{ source.label }}</strong>; kept items are linked to it.</p>
+  {% endif %}
   {% if action == 'cards' %}
   <input type="hidden" name="kind" value="cards">
   {% for c in result %}

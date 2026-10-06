@@ -109,13 +109,16 @@ def sections(text: str) -> dict[str, str]:
 
 
 def add(conn, course_id: int, front: str, back: str, *, type_: str = "basic", competency_id=None,
-        source: str = "manual") -> int:
+        source: str = "manual", source_ref: dict | None = None) -> int:
+    """`source_ref` = {"key", "hash"} of the note section the card was made from (see chunks.ref); optional."""
     today = clock.today().isoformat()
+    ref = source_ref or {}
     with conn:
         cur = conn.execute(
-            "INSERT INTO cards(course_id, competency_id, front, back, type, due_on, source, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (course_id, competency_id, front.strip(), back.strip(), type_, today, source, clock.now().isoformat()))
+            "INSERT INTO cards(course_id, competency_id, front, back, type, due_on, source, created_at, source_key, source_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (course_id, competency_id, front.strip(), back.strip(), type_, today, source, clock.now().isoformat(),
+             ref.get("key"), ref.get("hash")))
     return cur.lastrowid
 
 

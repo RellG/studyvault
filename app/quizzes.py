@@ -46,7 +46,8 @@ def choices_text(q) -> str:
     return "\n".join(("* " if i in answer else "") + c for i, c in enumerate(choices)) if q["kind"] != "short" else ""
 
 
-def save(conn, course_id, form: dict, question_id=None, source="manual") -> int:
+def save(conn, course_id, form: dict, question_id=None, source="manual", source_ref: dict | None = None) -> int:
+    """`source_ref` = {"key", "hash"} of the note section a new question was made from (see chunks.ref); optional."""
     choices, answer = build(form.get("kind", ""), form.get("prompt", ""), form.get("choices", ""), form.get("short_answer", ""))
     comp = form.get("competency_id") or None
     vals = (form["kind"], form["prompt"].strip(), json.dumps(choices), json.dumps(answer),
@@ -56,9 +57,10 @@ def save(conn, course_id, form: dict, question_id=None, source="manual") -> int:
             conn.execute("UPDATE questions SET kind = ?, prompt = ?, choices_json = ?, answer_json = ?, explanation = ?, "
                          "competency_id = ? WHERE id = ? AND course_id = ?", (*vals, question_id, course_id))
             return question_id
+        ref = source_ref or {}
         cur = conn.execute("INSERT INTO questions(kind, prompt, choices_json, answer_json, explanation, competency_id, "
-                           "course_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                           (*vals, course_id, source, clock.now().isoformat()))
+                           "course_id, source, created_at, source_key, source_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           (*vals, course_id, source, clock.now().isoformat(), ref.get("key"), ref.get("hash")))
         return cur.lastrowid
 
 

@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from . import clock
+from . import chunks, clock
 from .config import settings
 from .db import get_meta, set_meta
 
@@ -270,6 +270,9 @@ def index_file(conn, course, name: str) -> None:
                          "updated_at = excluded.updated_at", (rel, course["id"], _title(course, name), clock.now().isoformat()))
         else:
             conn.execute("DELETE FROM notes_index WHERE path = ?", (rel,))
+    if name in NOTE_FILES:  # sections for the course features and the agent; an untouched template has none
+        untouched = not text.strip() or text.strip() == _template(course, name).strip()
+        chunks.sync_file(conn, course["id"], name, "" if untouched else text)
 
 
 def reindex_all(conn) -> int:
