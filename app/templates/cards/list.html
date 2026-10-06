@@ -17,9 +17,10 @@
 {% endif %}
 
 <div class="row spread">
-  <h2 style="margin: 0">Flashcards <span class="muted small">{{ cards|length }} total · {{ due }} due</span></h2>
+  <h2 style="margin: 0">Flashcards <span class="muted small">{{ cards|length }} {{ "out of date" if only_old else "total" }} · {{ due }} due</span></h2>
   {% if due %}<a class="button primary" href="/review?course={{ course.code }}">Review {{ due }} due</a>{% endif %}
 </div>
+{% set noun = 'card' %}{% include "brain/_strip.html" %}
 
 <section class="cols two" style="margin-top: 1rem">
   <form class="card" method="post" action="/courses/{{ course.code }}/cards">
@@ -63,7 +64,8 @@
     {% for k in cards %}
     <tr id="card-{{ k.id }}">
       <td>{{ k.front|truncate(120, True, '…') }}{% if k.comp_text %}<div class="small muted">{{ k.comp_text|truncate(60, True, '…') }}</div>{% endif %}
-        {% if k.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}</td>
+        {% if k.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}
+        {% set s = src.get(k.id) %}{% include "brain/_src.html" %}</td>
       <td>{{ k.back|truncate(120, True, '…') }}</td>
       <td class="nowrap small">{% if k.due_on <= today.isoformat() %}<span class="badge amber">due</span>{% else %}{{ k.due_on|date("%b %-d") }}{% endif %}</td>
       <td class="nowrap"><a class="small" href="/cards/{{ k.id }}/edit">Edit</a></td>

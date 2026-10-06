@@ -41,6 +41,7 @@ class Fake:
     def __init__(self):
         self.prompts, self.gen_calls = [], 0
         self.fail_parts, self.fail_all, self.bogus = set(), None, False
+        self.verdicts = {}  # refresh: {("card" | "question", id): action}; unlisted items are kept; None = not mentioned
 
     def __call__(self, request):
         prompt = json.loads(request.content)["messages"][0]["content"]
@@ -58,7 +59,25 @@ class Fake:
             if self.fail_all or self.gen_calls in self.fail_parts:
                 return httpx.Response(400, json={"error": {"message": self.fail_all or "bad request"}})
             return reply(self.generation(keys))
+        if prompt.startswith("My notes for"):
+            return reply(self.refresh(prompt))
         raise AssertionError("unexpected prompt: " + prompt[:60])
+
+    def refresh(self, prompt):
+        out = {"cards": [], "questions": []}
+        for kind, table in (("card", "cards"), ("question", "questions")):
+            for i in map(int, re.findall(rf"^{kind} (\d+)[: ]", prompt, re.M)):
+                act = self.verdicts.get((kind, i), "keep")
+                if act is None:
+                    continue
+                x = {"id": i, "action": act, "why": f"{act} it"}
+                if act == "update" and kind == "card":
+                    x |= {"front": f"New front {i}", "back": "New back"}
+                elif act == "update":
+                    x |= {"kind": "mc", "prompt": f"New prompt {i}", "choices": ["W", "X", "Y", "Z"], "correct": [2], "explanation": "Now."}
+                out[table].append(x)
+        out["cards"].append({"id": 99999, "action": "remove"})  # an id it wasn't given: ignored
+        return out
 
     def analysis(self, keys):
         outline = [{"key": k, "title": k.split("#")[1].replace("-", " ").title(), "summary": f"What {k} says.",
@@ -454,3 +473,188 @@ def test_agent_apply_reports_a_busy_job(seeded, d413, monkeypatch):
     with pytest.raises(agent.ApplyError, match="Already working"):
         agent.apply(seeded, p, FormData([]))
     assert seeded.execute("SELECT status FROM agent_proposals").fetchone()[0] == "pending"  # still there to try again
+
+
+# ---------------------------------------------------------------- step 3: coverage, filling gaps, refreshing stale items
+
+WIRELESS_EDITED = NOTES.replace("Wi-Fi 2.4 GHz channels 1, 6 and 11", "Wi-Fi 2.4 GHz channels 1, 5 and 9")
+
+
+def linked_card(conn, course, key, front, back="b"):
+    return cards.add(conn, course["id"], front, back, source="ai-accepted", source_ref=chunks.ref(conn, course["id"], key))
+
+
+def linked_question(conn, course, key, prompt):
+    return quizzes.save(conn, course["id"], {"kind": "mc", "prompt": prompt, "choices": "A\n* B\nC"}, source="ai-accepted",
+                        source_ref=chunks.ref(conn, course["id"], key))
+
+
+def test_coverage_and_where_items_came_from(seeded, d413):
+    w = linked_card(seeded, d413, "notebook#wireless", "Non-overlapping 2.4 GHz channels?")
+    wired = linked_card(seeded, d413, "notebook#wired-transmission", "Twisted pair segment limit?")
+    q = linked_question(seeded, d413, "notebook#wireless", "Which band has more channels?")
+    cards.add(seeded, d413["id"], "Hand-made", "x")
+    cov = brain.coverage(seeded, d413["id"])
+    assert (cov["sections"], cov["covered"], cov["uncovered"], cov["stale"]) == (3, 2, ["notebook#preassessment"], [])
+    assert chunks.states(seeded, "cards", d413["id"]) == {w: ("current", "Wireless"), wired: ("current", "Wired transmission")}
+    notes_fs.write_note(seeded, d413, "notebook", WIRELESS_EDITED.replace("## Wired transmission", "## Cabling"))
+    cov = brain.coverage(seeded, d413["id"])
+    assert cov["stale"] == ["notebook#wireless"] and (cov["stale_cards"], cov["stale_questions"], cov["missing_cards"]) == (1, 1, 1)
+    assert chunks.states(seeded, "cards", d413["id"]) == {w: ("stale", "Wireless"), wired: ("missing", "")}
+    assert chunks.states(seeded, "questions", d413["id"]) == {q: ("stale", "Wireless")}
+    assert "notebook#cabling" in cov["uncovered"]  # the renamed section has nothing linked to it now
+
+
+def test_fill_writes_only_for_sections_with_nothing_yet(seeded, d413, fake):
+    brain.analyze(seeded, d413)
+    linked_card(seeded, d413, "notebook#wired-transmission", "Twisted pair segment limit?")
+    notes_fs.write_note(seeded, d413, "notebook", NOTES + "\n## Extra\nA new section written after the analysis ran.\n")
+    draft_id = brain.build(seeded, d413, scope="uncovered")
+    assert [p.split(" ")[0] for p in fake.prompts] == ["Analyze", "Write"]  # an old analysis is fine; no new call for it
+    assert "notebook#wired-transmission" not in fake.prompts[-1] and "notebook#extra" in fake.prompts[-1]
+    p = json.loads(seeded.execute("SELECT payload_json FROM brain_drafts WHERE id = ?", (draft_id,)).fetchone()[0])
+    assert p["scope"] == "uncovered" and not p["competencies"] and not p["tasks"] and not p["overview"]
+    assert {c["section"] for c in p["cards"]} == {"notebook#preassessment", "notebook#wireless", "notebook#extra"}
+    for key in ("notebook#preassessment", "notebook#wireless", "notebook#extra"):
+        linked_card(seeded, d413, key, f"Card for {key}")
+    with pytest.raises(brain.BrainError, match="Every section already"):
+        brain.build(seeded, d413, scope="uncovered")
+
+
+def test_refresh_checks_out_of_date_items_and_applies_what_is_ticked(seeded, d413, fake):
+    ids = [linked_card(seeded, d413, "notebook#wireless", f"Wireless card {n}?") for n in range(4)]
+    current = linked_card(seeded, d413, "notebook#wired-transmission", "Still fine?")
+    qid = linked_question(seeded, d413, "notebook#wireless", "Which band has more channels?")
+    seeded.execute("UPDATE cards SET reps = 3, due_on = '2026-12-01' WHERE id = ?", (ids[1],))
+    seeded.commit()
+    with pytest.raises(brain.BrainError, match="Nothing is out of date"):
+        brain.refresh(seeded, d413)
+    notes_fs.write_note(seeded, d413, "notebook", WIRELESS_EDITED)
+    new_hash = chunks.get(seeded, d413["id"], "notebook#wireless")["hash"]
+    fake.verdicts = {("card", ids[0]): "keep", ("card", ids[1]): "update", ("card", ids[2]): "remove", ("card", ids[3]): None,
+                     ("question", qid): "update"}
+    draft = seeded.execute("SELECT * FROM brain_drafts WHERE id = ?", (brain.refresh(seeded, d413),)).fetchone()
+    p = json.loads(draft["payload_json"])
+    assert p["scope"] == "refresh" and not p["cards"] and not p["tasks"]
+    up = p["updates"]
+    assert [(u["id"], u["action"]) for u in up["cards"]] == [(ids[0], "keep"), (ids[1], "update"), (ids[2], "remove"), (ids[3], "check")]
+    assert current not in [u["id"] for u in up["cards"]]  # only what's out of date is sent
+    assert up["cards"][1]["front"] == f"New front {ids[1]}" and up["cards"][1]["old_front"] == "Wireless card 1?"
+    assert up["questions"][0]["action"] == "update" and up["questions"][0]["choices_text"] == "W\nX\n* Y\nZ"
+    assert '<items section="notebook#wireless">' in fake.prompts[-1] and "1, 5 and 9" in fake.prompts[-1]
+    form = FormData(tick(upd_card=[0, 1, 2], upd_q=[0]) + [("act_card_2", "remove"), ("ufront_1", "My front"), ("act_card_1", "update")])
+    assert brain.apply_draft(seeded, d413, draft, form) == "Updated 2. Marked 1 still correct. Deleted 1."
+    rows = {r["id"]: r for r in seeded.execute("SELECT * FROM cards")}
+    assert rows[ids[0]]["front"] == "Wireless card 0?" and rows[ids[0]]["source_hash"] == new_hash
+    assert (rows[ids[1]]["front"], rows[ids[1]]["back"], rows[ids[1]]["reps"], rows[ids[1]]["due_on"]) == ("My front", "New back", 3, "2026-12-01")
+    assert ids[2] not in rows and rows[ids[3]]["source_hash"] != new_hash  # deleted; the unticked one is still out of date
+    q = seeded.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+    assert q["prompt"] == f"New prompt {qid}" and q["source_hash"] == new_hash and json.loads(q["answer_json"]) == [2]
+    assert chunks.freshness(seeded, d413["id"])["cards"]["stale"] == 1
+
+
+def test_refresh_skips_items_deleted_before_apply(seeded, d413, fake):
+    cid = linked_card(seeded, d413, "notebook#wireless", "Wireless card?")
+    notes_fs.write_note(seeded, d413, "notebook", WIRELESS_EDITED)
+    draft = seeded.execute("SELECT * FROM brain_drafts WHERE id = ?", (brain.refresh(seeded, d413),)).fetchone()
+    seeded.execute("DELETE FROM cards WHERE id = ?", (cid,))
+    seeded.commit()
+    with pytest.raises(brain.ApplyError, match="Nothing was ticked"):
+        brain.apply_draft(seeded, d413, draft, FormData([("upd_card", "0")]))
+
+
+def test_pages_show_coverage_and_check_out_of_date_items(client, fake):
+    conn = db.connect()
+    try:
+        c = catalog.get_course(conn, "D413")
+        notes_fs.ensure_repo()
+        notes_fs.ensure_course_files(conn, c)
+        notes_fs.write_note(conn, c, "notebook", NOTES)
+        cid = linked_card(conn, c, "notebook#wireless", "Non-overlapping 2.4 GHz channels?")
+        linked_question(conn, c, "notebook#wireless", "Which band has more channels?")
+        cards.add(conn, c["id"], "Hand-made card", "x")
+        page = client.get("/courses/D413/cards").text
+        assert "From your notes:" in page and "<strong>1</strong> of 3 sections covered" in page and "out of date</span>" not in page
+        notes_fs.write_note(conn, c, "notebook", WIRELESS_EDITED)
+        page = client.get("/courses/D413/cards").text
+        assert "1 card out of date" in page and "From Wireless" in page and "Show only these" in page
+        only = client.get("/courses/D413/cards?show=outdated").text
+        assert "Non-overlapping" in only and "Hand-made card" not in only and "Show all" in only
+        page = client.get("/courses/D413/quizzes").text
+        assert "1 question out of date" in page and "Which band has more channels?" in page
+        page = client.get("/courses/D413/brain").text
+        assert "Check 2 out-of-date items" in page and "Write for 2 uncovered sections" in page
+        assert "2 out of date</span>" in page  # on the Wireless row
+        r = client.post("/courses/D413/brain/run", data={"action": "refresh"}, follow_redirects=False)
+        assert r.status_code == 303
+        draft_id = wait_done("D413")["draft_id"]
+        d = client.get(f"/courses/D413/brain/draft/{draft_id}").text
+        assert "Out-of-date flashcards" in d and "Out-of-date practice questions" in d and "Apply ticked changes" in d
+        assert "Study plan" not in d and "Overview summary" not in d
+        r = client.post("/courses/D413/brain/run", data={"action": "fill"})
+        assert r.status_code == 409 and "A draft is waiting" in r.text  # not replaced by accident
+        r = client.post(f"/courses/D413/brain/draft/{draft_id}/apply", data={"upd_card": "0", "upd_q": "0"}, follow_redirects=False)
+        assert "Marked 2 still correct." in client.get(r.headers["location"]).text
+        assert "out of date</span>" not in client.get("/courses/D413/cards").text
+        assert conn.execute("SELECT COUNT(*) FROM cards WHERE id = ?", (cid,)).fetchone()[0] == 1
+        r = client.post("/courses/D413/brain/run", data={"action": "fill"}, follow_redirects=False)
+        assert r.status_code == 303 and wait_done("D413")["error"] is None
+        d = client.get(f"/courses/D413/brain/draft/{brain.pending_draft(conn, c['id'])['id']}").text
+        assert "Add ticked items" in d and "Out-of-date" not in d and "Study plan" not in d
+    finally:
+        conn.close()
+
+
+def test_agent_sees_out_of_date_items_and_offers_a_refresh(seeded, d413, fake, monkeypatch):
+    k = ctx(seeded)
+    assert "Nothing is out of date" in call(k, "propose_build_from_notes", code="D413", mode="refresh")["error"]
+    linked_card(seeded, d413, "notebook#wireless", "Wireless card?")
+    notes_fs.write_note(seeded, d413, "notebook", WIRELESS_EDITED)
+    brain.analyze(seeded, d413)
+    out = call(k, "get_course_brain", code="D413")
+    assert out["coverage"]["stale_cards"] == 1 and [s["out_of_date"] for s in out["sections"]] == [0, 0, 1]
+    out = call(k, "propose_build_from_notes", code="D413", mode="refresh")
+    assert out["summary"] == "check out-of-date D413 cards and questions"
+    started = []
+    monkeypatch.setattr(brain, "start", lambda course, kind, depth: started.append((course["code"], kind)))
+    p = seeded.execute("SELECT * FROM agent_proposals WHERE id = ?", (out["proposal_id"],)).fetchone()
+    agent.apply(seeded, p, FormData([]))
+    assert started == [("D413", "refresh")]
+    brain.build(seeded, d413)  # now a draft waits
+    out = call(k, "propose_build_from_notes", code="D413", mode="fill")
+    p = seeded.execute("SELECT * FROM agent_proposals WHERE id = ?", (out["proposal_id"],)).fetchone()
+    with pytest.raises(agent.ApplyError, match="A draft is waiting"):
+        agent.apply(seeded, p, FormData([]))
+
+
+def test_objectives_only_sections_are_not_gaps():
+    assert brain.is_objectives_only("At the end of this unit, you will be able to do the following:\n\ndefine telecomm\n"
+                                    "define wireless communication\n")
+    assert brain.is_objectives_only("**Learning Objectives**\nAt the end of this unit, you will be able to:\n- identify cable standards\n"
+                                    "- identify wireless standards")
+    long_para = "802.3 is a working group of standard specifications for Ethernet, a method of packet-based physical communication " * 2
+    assert not brain.is_objectives_only("Learning Objectives\nAt the end of this unit, you will be able to:\nidentify standards\n\n"
+                                        "**What is IEEE 802.3?**\n" + long_para)  # objectives, then real notes
+    assert not brain.is_objectives_only("Fiber carries light.\nCoax is shielded copper.\nTwisted pair is cheap.\nStudents should be able to compare them.")
+
+
+def test_the_summary_a_build_adds_is_not_treated_as_notes(seeded, d413, fake):
+    notes_fs.write_note(seeded, d413, "notebook", NOTES + "\n## Objectives\nAt the end of this unit, you will be able to:\n"
+                        "define telecomm\ndefine wireless communication\n")
+    draft = seeded.execute("SELECT * FROM brain_drafts WHERE id = ?", (brain.build(seeded, d413),)).fetchone()
+    brain.apply_draft(seeded, d413, draft, FormData([("overview", "1"), ("card", "0")]))
+    assert any(r["heading"].startswith("From my notes · ") for r in seeded.execute("SELECT heading FROM note_chunks"))
+    assert not any(r["heading"].startswith("From my notes") for r in brain.sections(seeded, d413["id"]))
+    cov = brain.coverage(seeded, d413["id"])
+    assert cov["objectives"] == ["notebook#objectives"] and "notebook#objectives" not in cov["uncovered"]
+    assert cov["sections"] == 3 and cov["covered"] == 1
+
+
+def test_refresh_judges_a_topic_list_by_its_topics(seeded, d413, fake):
+    linked_card(seeded, d413, "notebook#preassessment", "What is bandwidth?")
+    linked_card(seeded, d413, "notebook#wireless", "Wireless card?")
+    notes_fs.write_note(seeded, d413, "notebook", WIRELESS_EDITED.replace("- CIDR notation", "- CIDR notation\n- Subnetting"))
+    brain.refresh(seeded, d413)
+    prompt = fake.prompts[-1]
+    assert 'title="PreAssessment" kind="topic list">' in prompt and 'title="Wireless">' in prompt
+    assert "keep such an item while its topic is still in the list" in prompt

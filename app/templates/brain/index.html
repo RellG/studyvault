@@ -46,7 +46,9 @@
           <td><a href="/courses/{{ course.code }}/notes/{{ r.file }}">{{ r.title or r.where }}</a>
             {% if r.importance == 3 %}<span class="badge accent" title="Core exam material">core</span>{% endif %}
             {% if r.summary %}<div class="small muted">{{ r.summary }}</div>{% endif %}
-            {% if r.thin %}<div class="small"><span class="badge amber">thin</span> {{ r.thin }}</div>{% endif %}</td>
+            {% if r.thin %}<div class="small"><span class="badge amber">thin</span> {{ r.thin }}</div>{% endif %}
+            {% if r.stale %}<div class="small"><span class="badge amber">{{ r.stale }} out of date</span></div>{% endif %}
+            {% if r.objectives %}<div class="small muted">Only lists learning objectives, so nothing is made from it</div>{% endif %}</td>
           <td class="nowrap small muted">{{ '{:,}'.format(r.chars) }}</td>
           <td>{{ r.cards or '—' }}</td><td>{{ r.questions or '—' }}</td>
         </tr>
@@ -83,6 +85,26 @@
       {% endif %}
       {% elif not ai_enabled %}<p class="small muted">AI is off, so there's nothing to run. The section list above still works.</p>{% endif %}
     </div>
+    {% if cov.sections %}
+    {% set n_stale = cov.stale_cards + cov.stale_questions %}{% set n_gone = cov.missing_cards + cov.missing_questions %}
+    <div class="card" id="coverage">
+      <h2 style="margin-top: 0">Coverage</h2>
+      <p><strong>{{ cov.covered }}</strong> of {{ cov.sections }} sections have cards or questions made from them.</p>
+      {% if n_stale %}<p><span class="badge amber">{{ n_stale }} out of date</span> <span class="small muted">made from a section you've edited since ({{ cov.stale_cards }} card{{ 's' if cov.stale_cards != 1 }}, {{ cov.stale_questions }} question{{ 's' if cov.stale_questions != 1 }})</span></p>{% endif %}
+      {% if n_gone %}<p class="small muted">{{ n_gone }} item{{ 's' if n_gone != 1 }} came from a section that's gone (its heading was renamed or removed). Edit or delete {{ 'them' if n_gone != 1 else 'it' }} on the Cards and Quizzes tabs.</p>{% endif %}
+      {% if ai_enabled and not running and not other and (n_stale or (cov.uncovered and cov.covered)) %}
+        {% if draft %}<p class="small muted">Review or dismiss the waiting draft first, so it isn't replaced.</p>
+        {% else %}
+        <form method="post" action="/courses/{{ course.code }}/brain/run" class="stack">
+          <input type="hidden" name="depth" value="normal">
+          {% if cov.uncovered and cov.covered %}<button type="submit" name="action" value="fill">Write for {{ cov.uncovered|length }} uncovered section{{ 's' if cov.uncovered|length != 1 }}</button>{% endif %}
+          {% if n_stale %}<button type="submit" name="action" value="refresh">Check {{ n_stale }} out-of-date item{{ 's' if n_stale != 1 }}</button>{% endif %}
+          <p class="small muted">Both leave a draft to review, like a build. Checking compares each item with its section as it is now and suggests keeping, updating or deleting it.</p>
+        </form>
+        {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
   </aside>
 </section>
 {% endblock %}

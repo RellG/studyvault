@@ -190,7 +190,11 @@ def outline(conn, course_id: int, files=BRAIN_FILES) -> list[dict]:
     rows = conn.execute(
         f"""SELECT n.file, n.key, n.ord, n.heading, n.breadcrumb, n.level, n.chars, n.hash,
                    (SELECT COUNT(*) FROM cards k WHERE k.course_id = n.course_id AND k.source_key = n.key) AS cards,
-                   (SELECT COUNT(*) FROM questions q WHERE q.course_id = n.course_id AND q.source_key = n.key) AS questions
+                   (SELECT COUNT(*) FROM questions q WHERE q.course_id = n.course_id AND q.source_key = n.key) AS questions,
+                   (SELECT COUNT(*) FROM cards k WHERE k.course_id = n.course_id AND k.source_key = n.key
+                                                   AND k.source_hash IS NOT n.hash) AS stale_cards,
+                   (SELECT COUNT(*) FROM questions q WHERE q.course_id = n.course_id AND q.source_key = n.key
+                                                       AND q.source_hash IS NOT n.hash) AS stale_questions
             FROM note_chunks n WHERE n.course_id = ? AND n.file IN ({','.join('?' * len(files))})
             ORDER BY CASE n.file WHEN 'overview' THEN 0 WHEN 'competencies' THEN 1 WHEN 'notebook' THEN 2 ELSE 3 END, n.ord""",
         (course_id, *files)).fetchall()
@@ -213,3 +217,15 @@ def freshness(conn, course_id: int) -> dict:
                 WHERE t.course_id = ?""", (course_id,)).fetchone()
         out[table] = {k: r[k] or 0 for k in ("total", "unlinked", "current", "stale", "missing")}
     return out
+
+
+def states(conn, table: str, course_id: int) -> dict:
+    """{item id: ('current' | 'stale' | 'missing', where)} for the cards or questions of a course that came from a section."""
+    if table not in ("cards", "questions"):
+        raise ValueError(table)
+    rows = conn.execute(
+        f"""SELECT t.id, n.breadcrumb, CASE WHEN n.id IS NULL THEN 'missing' WHEN n.hash IS NOT t.source_hash THEN 'stale'
+                                            ELSE 'current' END AS state
+            FROM {table} t LEFT JOIN note_chunks n ON n.course_id = t.course_id AND n.key = t.source_key
+            WHERE t.course_id = ? AND t.source_key IS NOT NULL""", (course_id,)).fetchall()
+    return {r["id"]: (r["state"], (r["breadcrumb"] or "(top of file)") if r["state"] != "missing" else "") for r in rows}

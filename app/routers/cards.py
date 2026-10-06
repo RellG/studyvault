@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import cards, competencies as comp, markdown, notes_fs, srs
+from .. import brain, cards, chunks, competencies as comp, markdown, notes_fs, srs
 from ..db import connect, get_db
 from ..web import context_providers, render
 from .notes import course_context, known_codes, load
@@ -31,7 +31,12 @@ def cards_page(request, conn, c, **extra):
     rows = conn.execute(
         "SELECT cards.*, competencies.text AS comp_text FROM cards LEFT JOIN competencies ON competencies.id = cards.competency_id "
         "WHERE cards.course_id = ? ORDER BY cards.id DESC", (c["id"],)).fetchall()
-    return render(request, "cards/list.html", **course_context(conn, c), tab="cards", cards=rows,
+    src = chunks.states(conn, "cards", c["id"])
+    only_old = request.query_params.get("show") == "outdated"
+    if only_old:
+        rows = [r for r in rows if src.get(r["id"], ("",))[0] in ("stale", "missing")]
+    return render(request, "cards/list.html", **course_context(conn, c), tab="cards", cards=rows, src=src, only_old=only_old,
+                  cov=brain.coverage(conn, c["id"]),
                   comps=comp.list_for(conn, c["id"]), due=cards.due_count(conn, c["id"]),
                   sections=cards.notes_sections(c), **extra)
 

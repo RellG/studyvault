@@ -239,8 +239,10 @@ def get_course_brain(ctx, code):
     return {"analyzed": True, "up_to_date": i["state"] == "fresh", "analyzed_on": i["analyzed_at"][:10],
             "summary": prof["summary"], "objectives": prof["objectives"], "competencies": [x["text"] for x in prof["competencies"]],
             "sections": [{**_pick(o, "key", "title", "summary", "importance"), "cards": counts.get(o["key"], {}).get("cards", 0),
-                          "questions": counts.get(o["key"], {}).get("questions", 0), "thin": thin.get(o["key"])}
+                          "questions": counts.get(o["key"], {}).get("questions", 0), "thin": thin.get(o["key"]),
+                          "out_of_date": counts.get(o["key"], {}).get("stale_cards", 0) + counts.get(o["key"], {}).get("stale_questions", 0)}
                          for o in prof["outline"]],
+            "coverage": {k: v for k, v in brain.coverage(ctx.conn, c["id"]).items() if k not in ("uncovered", "stale", "objectives")},
             "topic_lists": [{"where": t["where"], "terms": t["terms"][:40]} for t in prof["topic_lists"]]}
 
 
@@ -710,15 +712,28 @@ def propose_task_update(ctx, task_id, status=None, due_on=None, priority=None, t
       "questions, a study plan and an overview summary, all from what the notes say. It runs in the background and takes a "
       "few minutes (the student's free AI tier is rate-limited); the student reviews the draft on the course's From notes "
       "page before anything is added. Use this when asked to set up, populate or fill in a course from its notes, instead "
-      "of writing all of it yourself. Optional depth: light, normal or thorough.",
-      {"code": CODE, "depth": {"type": "string", "enum": list(brain.DEPTHS), "description": "How many cards and questions"}},
+      "of writing all of it yourself. Optional depth: light, normal or thorough. mode 'fill' writes cards and questions only "
+      "for sections that have none yet; mode 'refresh' checks the cards and questions made from sections the student has "
+      "edited since (get_course_brain shows both) and suggests keeping, updating or deleting each.",
+      {"code": CODE, "depth": {"type": "string", "enum": list(brain.DEPTHS), "description": "How many cards and questions"},
+       "mode": {"type": "string", "enum": ["all", "fill", "refresh"], "description": "all (the default), fill or refresh"}},
       ["code"])
-def propose_build_from_notes(ctx, code, depth="normal"):
+def propose_build_from_notes(ctx, code, depth="normal", mode="all"):
     c = _course(ctx.conn, code)
     if not brain.sections(ctx.conn, c["id"]):
         raise ToolError(f"{c['code']} has no notes to build from yet. Ask the student to write some in the Notebook.")
     depth = depth if depth in brain.DEPTHS else "normal"
-    return _propose(ctx, "brain_build", c, {"depth": depth}, f"build {c['code']} from its notes ({depth})")
+    mode = mode if mode in BUILD_MODES else "all"
+    cov = brain.coverage(ctx.conn, c["id"])
+    if mode == "fill" and not cov["uncovered"]:
+        raise ToolError("Every section already has cards or questions; there's nothing to fill.")
+    if mode == "refresh" and not cov["stale"]:
+        raise ToolError("Nothing is out of date: every card and question made from the notes still matches them.")
+    return _propose(ctx, "brain_build", c, {"depth": depth, "mode": mode}, BUILD_MODES[mode].format(code=c["code"], depth=depth))
+
+
+BUILD_MODES = {"all": "build {code} from its notes ({depth})", "fill": "fill the uncovered sections of {code} ({depth})",
+               "refresh": "check out-of-date {code} cards and questions"}
 
 
 # ---------------------------------------------------------------- memory: saved at once (it's the agent's own notes
@@ -835,7 +850,7 @@ How to work:
 - Facts about the student's own courses, notes, flashcards, quizzes, progress, dates and schedule come only from your tools. Look them up; never guess them. If a lookup is empty, say so.
 - Requests are rate-limited, so gather what you need in as few steps as possible: call several tools at once rather than one per step, and don't repeat a lookup you already have.
 - The student's notes are the source for their course material. A long notebook is cut off by read_note: list_note_sections shows every section with a key, and read_note_section reads one in full. When you write flashcards or questions from the notes, read the section first, base them on what it says, and pass its `section_key` so each item is linked to where it came from. Where you add anything the notes don't state, say so; if the notes don't cover something the student asks about, say that and offer to propose a notebook section.
-- To set a course up from its notes (competencies, cards, questions, a study plan), use propose_build_from_notes: it reads all the notes and drafts everything for the student to review, which you can't do within your lookup limit. get_course_brain tells you what the notes cover and what's still missing.
+- To set a course up from its notes (competencies, cards, questions, a study plan), use propose_build_from_notes: it reads all the notes and drafts everything for the student to review, which you can't do within your lookup limit. get_course_brain tells you what the notes cover, what's still missing and which items are out of date; offer mode fill for sections with no cards or questions, and mode refresh for out-of-date items.
 - For subject knowledge (networking, AWS, Linux, security, IT) answer from what you know, and say when it differs from the student's notes.
 - Changes (adding, editing or deleting flashcards; adding or deleting questions; notebook sections, confidence ratings, exam dates, quizzes, study time, study tasks) are proposals: calling a write action shows the student a card with an Apply button just below your reply, and nothing is saved until they press it. Say you've proposed it; never say it was saved or added. To edit or delete, look the items up first (list_flashcards / list_questions) and pass their ids; use all=true only when the student asks for everything. Never say you can't edit or delete cards or questions.
 - When the student gives you a list (topics to learn, terms from a pre-assessment, missed questions), cover EVERY item: at least one flashcard per term, more where a term has two things worth knowing. Fill in answers from your own knowledge where their notes have none. A long list takes several add_flashcards calls in the same step, so make them all at once. Then say how many cards you proposed and name any item you left out and why.
@@ -1035,10 +1050,14 @@ def apply(conn, p, form) -> tuple[str, str | None]:
         result, link = f"{c['code']} exam set for {form.get('date')}.", f"{base}/assessment"
     elif kind == "brain_build":
         try:
-            brain.start(c, "build", str(form.get("depth") or payload.get("depth") or "normal"))
+            mode = payload.get("mode") or "all"
+            if mode != "all" and brain.pending_draft(conn, c["id"]):
+                raise ApplyError("A draft is waiting on the From notes page. Add or dismiss it first, so it isn't replaced.")
+            brain.start(c, "build" if mode == "all" else mode, str(form.get("depth") or payload.get("depth") or "normal"))
         except ai.AIError as e:
             raise ApplyError(str(e))
-        result = f"Started building {c['code']} from its notes. It takes a few minutes; the draft will be waiting on its From notes page."
+        result = (f"Started {'building' if mode == 'all' else 'working on'} {c['code']} from its notes. It takes a few minutes; "
+                  "the draft will be waiting on its From notes page.")
         link = f"{base}/brain"
     elif kind == "quiz":
         try:

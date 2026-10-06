@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ course.code }} draft from notes · studyvault{% endblock %}
 {% block content %}
+{% set go = 'Apply ticked changes' if p.scope == 'refresh' else 'Add ticked items' %}
 {% include "courses/_header.html" %}
 {% include "courses/_tabs.html" %}
 {% if error %}<div class="banner red" role="alert">{{ error }}</div>{% endif %}
-<div class="banner amber" role="note">Draft from the model, built from your notes: check each item against them. Nothing is saved until you press <strong>Add ticked items</strong>, and only what's ticked.</div>
+<div class="banner amber" role="note">Draft from the model, built from your notes: check each item against them. Nothing is saved until you press <strong>{{ go }}</strong>, and only what's ticked.</div>
 {% if draft.status != 'pending' %}<div class="banner info" role="status">{{ 'Applied: ' ~ draft.result if draft.status == 'applied' else 'This draft was dismissed.' }} <a href="/courses/{{ course.code }}/brain">Back</a></div>{% endif %}
 {% if changed and draft.status == 'pending' %}<div class="banner amber" role="note">Your notes have changed since this was built. Items link to the text as it was then, so they'll show as out of date if that section changed. You can build again for a fresh draft.</div>{% endif %}
 {% for w in p.warnings %}<div class="banner red" role="note">{{ w }}</div>{% endfor %}
@@ -21,12 +22,15 @@
   </section>
   {% endif %}
 
+  {% if p.overview %}
   <section class="card" style="margin-top: 1rem">
     <h2 style="margin-top: 0">Overview summary</h2>
     <label class="inline"><input type="checkbox" name="overview" value="1" checked> Add this to the end of the Overview note, dated today</label>
     <details><summary>Edit text</summary><textarea name="overview_text" rows="10">{{ p.overview }}</textarea></details>
   </section>
+  {% endif %}
 
+  {% if p.tasks %}
   <section class="card" style="margin-top: 1rem">
     <h2 style="margin-top: 0">Study plan <span class="muted small">({{ p.tasks|length }} tasks)</span></h2>
     <p class="small muted">Added to this course's Tasks. The card and quiz tasks close themselves when you actually review and take a quiz.</p>
@@ -36,6 +40,72 @@
       <input type="date" name="due_{{ loop.index0 }}" value="{{ t.due_on or '' }}" aria-label="Due date" style="width: 11rem"></div>
     {% endfor %}
   </section>
+  {% endif %}
+
+  {% if update_card_groups or update_q_groups %}
+  {% set verdicts = {'keep': ('green', 'Still correct'), 'update': ('amber', 'Needs an update'), 'remove': ('red', 'No longer in your notes'), 'check': ('', 'Check it yourself')} %}
+  <p class="small muted">Each item was made from an earlier version of its section. For each one, the model compared it with the section as it is now. Pick what to do, and tick the ones to apply: <strong>Mark current</strong> keeps the text, <strong>Update</strong> saves the new text (review history is kept), <strong>Delete</strong> removes it. Deletions start unticked.</p>
+  {% if update_card_groups %}
+  <h2>Out-of-date flashcards <span class="muted small">({{ p.updates.cards|length }})</span></h2>
+  {% for g in update_card_groups %}
+  <section class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" data-tick> <strong>{{ g.label }}</strong> <span class="muted small">({{ g['items']|length }})</span></label>
+    {% for i, u in g['items'] %}{% set v = verdicts[u.action] %}
+    <div class="proposal-item">
+      <div class="row">
+        <label class="inline"><input type="checkbox" name="upd_card" value="{{ i }}" {{ 'checked' if u.action in ('keep', 'update') }}> Apply</label>
+        <select name="act_card_{{ i }}" aria-label="What to do with this card" style="width: auto">
+          <option value="keep" {{ 'selected' if u.action in ('keep', 'check') }}>Mark current</option>
+          <option value="update" {{ 'selected' if u.action == 'update' }}>Update</option>
+          <option value="remove" {{ 'selected' if u.action == 'remove' }}>Delete</option>
+        </select>
+        <span class="badge {{ v[0] }}">{{ v[1] }}</span>{% if u.why %} <span class="small muted">{{ u.why }}</span>{% endif %}
+      </div>
+      <p class="small muted was">Card now: {{ u.old_front }} → {{ u.old_back }}</p>
+      <details {{ 'open' if u.action == 'update' }}><summary class="small">{{ 'New text' if u.action == 'update' else 'Edit' }}</summary>
+        <div class="form-grid">
+          <div><label for="uf{{ i }}">Front</label><textarea id="uf{{ i }}" name="ufront_{{ i }}" rows="2">{{ u.front }}</textarea></div>
+          <div><label for="ub{{ i }}">Back</label><textarea id="ub{{ i }}" name="uback_{{ i }}" rows="2">{{ u.back }}</textarea></div>
+        </div>
+        <p class="small muted">Saved only when this item is set to Update.</p>
+      </details>
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  {% endif %}
+  {% if update_q_groups %}
+  <h2>Out-of-date practice questions <span class="muted small">({{ p.updates.questions|length }})</span></h2>
+  {% for g in update_q_groups %}
+  <section class="card" style="margin: .6rem 0">
+    <label class="inline"><input type="checkbox" data-tick> <strong>{{ g.label }}</strong> <span class="muted small">({{ g['items']|length }})</span></label>
+    {% for i, u in g['items'] %}{% set v = verdicts[u.action] %}
+    <div class="proposal-item">
+      <div class="row">
+        <label class="inline"><input type="checkbox" name="upd_q" value="{{ i }}" {{ 'checked' if u.action in ('keep', 'update') }}> Apply</label>
+        <select name="act_q_{{ i }}" aria-label="What to do with this question" style="width: auto">
+          <option value="keep" {{ 'selected' if u.action in ('keep', 'check') }}>Mark current</option>
+          {% if not u.short %}<option value="update" {{ 'selected' if u.action == 'update' }}>Update</option>{% endif %}
+          <option value="remove" {{ 'selected' if u.action == 'remove' }}>Delete</option>
+        </select>
+        <span class="badge {{ v[0] }}">{{ v[1] }}</span>{% if u.why %} <span class="small muted">{{ u.why }}</span>{% endif %}
+      </div>
+      <p class="small muted was">Question now: {{ u.old_prompt }}</p>
+      {% if not u.short %}
+      <details {{ 'open' if u.action == 'update' }}><summary class="small">{{ 'New text' if u.action == 'update' else 'Edit' }}</summary>
+        <input type="hidden" name="ukind_{{ i }}" value="{{ u.kind }}">
+        <label for="uq{{ i }}">Question</label><textarea id="uq{{ i }}" name="uprompt_{{ i }}" rows="2">{{ u.prompt }}</textarea>
+        <label for="uc{{ i }}">Choices (<code>*</code> marks correct)</label><textarea id="uc{{ i }}" name="uchoices_{{ i }}" rows="4">{{ u.choices_text }}</textarea>
+        <label for="ue{{ i }}">Explanation</label><textarea id="ue{{ i }}" name="uexpl_{{ i }}" rows="2">{{ u.explanation }}</textarea>
+        <p class="small muted">Saved only when this item is set to Update.</p>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  {% endif %}
+  {% endif %}
 
   {% if card_groups %}
   <h2>Flashcards <span class="muted small">({{ p.cards|length }})</span></h2>
@@ -80,7 +150,7 @@
 
   {% if draft.status == 'pending' %}
   <div class="actions">
-    <button class="primary" type="submit">Add ticked items</button>
+    <button class="primary" type="submit">{{ go }}</button>
     <button class="button" type="submit" formaction="/courses/{{ course.code }}/brain/draft/{{ draft.id }}/dismiss">Dismiss draft</button>
   </div>
   {% endif %}
@@ -90,7 +160,7 @@
 <script>
 document.addEventListener("change", function (e) {
   if (!e.target.matches("[data-tick]")) return;
-  e.target.closest("section").querySelectorAll("input[name=card], input[name=question]").forEach(function (c) { c.checked = e.target.checked; });
+  e.target.closest("section").querySelectorAll("input[name=card], input[name=question], input[name=upd_card], input[name=upd_q]").forEach(function (c) { c.checked = e.target.checked; });
 });
 </script>
 {% endblock %}

@@ -18,13 +18,15 @@ def _rows(conn, c, profile):
     said = {o["key"]: o for o in (profile or {}).get("outline", [])}
     thin = {t["key"]: t["why"] for t in (profile or {}).get("thin_spots", [])}
     usable = {r["key"] for r in brain.sections(conn, c["id"])}
+    objectives = set(brain.coverage(conn, c["id"])["objectives"])
     out = []
     for r in chunks.outline(conn, c["id"]):
         if r["key"] not in usable:
             continue
         o = said.get(r["key"], {})
         out.append({**r, "where": r["breadcrumb"] or "(top of file)", "title": o.get("title"), "summary": o.get("summary", ""),
-                    "importance": o.get("importance"), "thin": thin.get(r["key"])})
+                    "importance": o.get("importance"), "thin": thin.get(r["key"]), "stale": r["stale_cards"] + r["stale_questions"],
+                    "objectives": r["key"] in objectives})
     return out
 
 
@@ -34,7 +36,7 @@ def _page(request, conn, c, error=None, status_code=200):
     return render(request, "brain/index.html", **course_context(conn, c), tab="brain", info=info, rows=_rows(conn, c, info["profile"]),
                   job=job, running=bool(job and not job["done"]), other=brain.busy() if brain.busy() != c["code"] else None,
                   draft=brain.pending_draft(conn, c["id"]), error=error or (job["error"] if job and job["done"] else None),
-                  depths=brain.DEPTHS, status_code=status_code)
+                  depths=brain.DEPTHS, cov=brain.coverage(conn, c["id"]), status_code=status_code)
 
 
 @router.get("/courses/{code}/brain")
@@ -47,8 +49,11 @@ async def brain_run(request: Request, code: str, conn=Depends(get_db)):
     c = load(conn, code)
     form = await request.form()
     action = form.get("action")
-    if action not in ("analyze", "build"):
+    if action not in brain.KINDS:
         raise HTTPException(400)
+    if action in ("fill", "refresh") and brain.pending_draft(conn, c["id"]):
+        return _page(request, conn, c, error="A draft is waiting for review. Add or dismiss it first, so it isn't replaced.",
+                     status_code=409)
     depth = form.get("depth") if form.get("depth") in brain.DEPTHS else "normal"
     try:
         brain.start(c, action, depth)
@@ -84,9 +89,11 @@ def draft_page(request: Request, code: str, draft_id: int, error: str = "", conn
     c = load(conn, code)
     d = _draft(conn, c, draft_id)
     p = json.loads(d["payload_json"])
-    order = [r["key"] for r in brain.sections(conn, c["id"])]
+    order = [r["key"] for r in chunks.outline(conn, c["id"], chunks.FILES)]
+    up = p.get("updates") or {}
     return render(request, "brain/draft.html", **course_context(conn, c), tab="brain", draft=d, p=p,
                   card_groups=_groups(p["cards"], order), question_groups=_groups(p["questions"], order),
+                  update_card_groups=_groups(up.get("cards", []), order), update_q_groups=_groups(up.get("questions", []), order),
                   changed=d["notes_hash"] != chunks.notes_hash(conn, c["id"]), error=error)
 
 

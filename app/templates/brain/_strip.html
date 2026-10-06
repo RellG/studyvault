@@ -1,0 +1,8 @@
+{# Coverage line on the Cards / Quizzes tabs. Needs cov, only_old, and noun ('card' or 'question'). #}
+{% if cov.sections %}
+{% set n_old = (cov.stale_cards + cov.missing_cards) if noun == 'card' else (cov.stale_questions + cov.missing_questions) %}
+<p class="small notes-strip">From your notes: <strong>{{ cov.covered }}</strong> of {{ cov.sections }} sections covered.
+  {% if n_old %}<span class="badge amber">{{ n_old }} {{ noun }}{{ 's' if n_old != 1 }} out of date</span>
+    {% if only_old %}<a href="?">Show all</a>{% else %}<a href="?show=outdated">Show only these</a>{% endif %} ·{% endif %}
+  <a href="/courses/{{ course.code }}/brain#coverage">{{ 'Check or fill gaps' if n_old or cov.covered < cov.sections else 'See sections' }}</a></p>
+{% endif %}

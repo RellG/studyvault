@@ -47,15 +47,17 @@
 
 <section class="card" style="margin-top: 1rem">
   <div class="row spread">
-    <h2 style="margin: 0">Question bank <span class="muted small">{{ questions|length }}</span></h2>
+    <h2 style="margin: 0">Question bank <span class="muted small">{{ bank|length }}{{ " out of date" if only_old }}</span></h2>
     <a class="button primary small" href="/courses/{{ course.code }}/quizzes/questions/new">Add question</a>
   </div>
-  {% if questions %}
+  {% set noun = 'question' %}{% include "brain/_strip.html" %}
+  {% if bank %}
   <div class="table-wrap"><table style="margin-top: .6rem">
     <thead><tr><th>Question</th><th>Type</th><th></th></tr></thead>
-    <tbody>{% for q in questions %}
+    <tbody>{% for q in bank %}
       <tr><td>{{ q.prompt|truncate(110, True, '…') }}{% if q.comp_text %}<div class="small muted">{{ q.comp_text|truncate(60, True, '…') }}</div>{% endif %}
-        {% if q.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}</td>
+        {% if q.source == 'ai-accepted' %}<span class="badge accent">AI</span>{% endif %}
+        {% set s = src.get(q.id) %}{% include "brain/_src.html" %}</td>
         <td class="small nowrap">{{ kinds[q.kind] }}</td>
         <td><a class="small" href="/courses/{{ course.code }}/quizzes/questions/{{ q.id }}">Edit</a></td></tr>
     {% endfor %}</tbody>

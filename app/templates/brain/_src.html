@@ -1,0 +1,4 @@
+{# Where a card or question came from, and whether that section has changed since. Needs s = src.get(item id). #}
+{% if s %}<div class="small muted">From {{ s[1] or 'a section that is gone' }}
+  {% if s[0] == 'stale' %}<span class="badge amber" title="You've edited this section since; check it still matches">out of date</span>
+  {% elif s[0] == 'missing' %}<span class="badge" title="Its heading was renamed or removed">section gone</span>{% endif %}</div>{% endif %}

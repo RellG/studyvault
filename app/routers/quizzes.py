@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import clock, competencies as comp, markdown, quizzes
+from .. import brain, chunks, clock, competencies as comp, markdown, quizzes
 from ..db import get_db
 from ..web import render
 from .notes import course_context, known_codes, load
@@ -25,8 +25,12 @@ def _attempt(conn, attempt_id):
 
 
 def quiz_page(request, conn, c, **extra):
-    return render(request, "quizzes/index.html", **course_context(conn, c), tab="quizzes",
-                  questions=quizzes.bank(conn, c["id"]), history=quizzes.history(conn, c["id"]),
+    qs = quizzes.bank(conn, c["id"])
+    src = chunks.states(conn, "questions", c["id"])
+    only_old = request.query_params.get("show") == "outdated"
+    bank = [q for q in qs if src.get(q["id"], ("",))[0] in ("stale", "missing")] if only_old else qs
+    return render(request, "quizzes/index.html", **course_context(conn, c), tab="quizzes", questions=qs, bank=bank, src=src,
+                  only_old=only_old, cov=brain.coverage(conn, c["id"]), history=quizzes.history(conn, c["id"]),
                   comps=comp.list_for(conn, c["id"]), kinds=quizzes.KINDS, **extra)
 
 
